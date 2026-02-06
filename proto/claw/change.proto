@@ -1,0 +1,48 @@
+syntax = "proto3";
+package claw.change;
+
+import "claw/common.proto";
+import "claw/objects.proto";
+
+service ChangeService {
+  rpc Create(CreateChangeRequest) returns (CreateChangeResponse);
+  rpc Get(GetChangeRequest) returns (GetChangeResponse);
+  rpc List(ListChangesRequest) returns (ListChangesResponse);
+  rpc UpdateStatus(UpdateChangeStatusRequest) returns (UpdateChangeStatusResponse);
+}
+
+message CreateChangeRequest {
+  claw.common.Ulid intent_id = 1;
+  string author = 2;
+  string description = 3;
+}
+
+message CreateChangeResponse {
+  claw.objects.Change change = 1;
+}
+
+message GetChangeRequest {
+  claw.common.Ulid id = 1;
+}
+
+message GetChangeResponse {
+  claw.objects.Change change = 1;
+}
+
+message ListChangesRequest {
+  claw.common.Ulid intent_id = 1;
+  string status_filter = 2;
+}
+
+message ListChangesResponse {
+  repeated claw.objects.Change changes = 1;
+}
+
+message UpdateChangeStatusRequest {
+  claw.common.Ulid id = 1;
+  string status = 2;
+}
+
+message UpdateChangeStatusResponse {
+  claw.objects.Change change = 1;
+}

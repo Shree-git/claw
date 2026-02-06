@@ -1,0 +1,35 @@
+syntax = "proto3";
+package claw.common;
+
+message ObjectId {
+  bytes hash = 1;
+}
+
+message Timestamp {
+  uint64 seconds = 1;
+}
+
+message Ulid {
+  bytes data = 1;
+}
+
+message Signature {
+  string signer_id = 1;
+  bytes ed25519_sig = 2;
+}
+
+enum ObjectType {
+  OBJECT_TYPE_UNSPECIFIED = 0;
+  OBJECT_TYPE_BLOB = 1;
+  OBJECT_TYPE_TREE = 2;
+  OBJECT_TYPE_PATCH = 3;
+  OBJECT_TYPE_REVISION = 4;
+  OBJECT_TYPE_SNAPSHOT = 5;
+  OBJECT_TYPE_INTENT = 6;
+  OBJECT_TYPE_CHANGE = 7;
+  OBJECT_TYPE_CONFLICT = 8;
+  OBJECT_TYPE_CAPSULE = 9;
+  OBJECT_TYPE_POLICY = 10;
+  OBJECT_TYPE_WORKSTREAM = 11;
+  OBJECT_TYPE_REFLOG = 12;
+}

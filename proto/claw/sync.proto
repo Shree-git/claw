@@ -1,0 +1,80 @@
+syntax = "proto3";
+package claw.sync;
+
+import "claw/common.proto";
+
+service SyncService {
+  rpc Hello(HelloRequest) returns (HelloResponse);
+  rpc AdvertiseRefs(AdvertiseRefsRequest) returns (AdvertiseRefsResponse);
+  rpc FetchObjects(FetchObjectsRequest) returns (stream ObjectChunk);
+  rpc PushObjects(stream ObjectChunk) returns (PushObjectsResponse);
+  rpc UpdateRefs(UpdateRefsRequest) returns (UpdateRefsResponse);
+}
+
+message HelloRequest {
+  string client_version = 1;
+  repeated string capabilities = 2;
+}
+
+message HelloResponse {
+  string server_version = 1;
+  repeated string capabilities = 2;
+}
+
+message AdvertiseRefsRequest {
+  string prefix = 1;
+}
+
+message AdvertiseRefsResponse {
+  repeated RefEntry refs = 1;
+}
+
+message RefEntry {
+  string name = 1;
+  claw.common.ObjectId target = 2;
+}
+
+message FetchObjectsRequest {
+  repeated claw.common.ObjectId want = 1;
+  repeated claw.common.ObjectId have = 2;
+  PartialCloneFilter filter = 3;
+}
+
+message PartialCloneFilter {
+  repeated string intent_ids = 1;
+  repeated string path_prefixes = 2;
+  uint64 time_range_start = 3;
+  uint64 time_range_end = 4;
+  repeated string codec_ids = 5;
+  string capsule_visibility = 6;
+  uint64 max_bytes = 7;
+  uint32 max_depth = 8;
+}
+
+message ObjectChunk {
+  claw.common.ObjectId id = 1;
+  claw.common.ObjectType object_type = 2;
+  bytes data = 3;
+  bool is_last = 4;
+}
+
+message PushObjectsResponse {
+  bool success = 1;
+  string message = 2;
+  repeated claw.common.ObjectId accepted = 3;
+}
+
+message UpdateRefsRequest {
+  repeated RefUpdate updates = 1;
+}
+
+message RefUpdate {
+  string name = 1;
+  claw.common.ObjectId old_target = 2;
+  claw.common.ObjectId new_target = 3;
+}
+
+message UpdateRefsResponse {
+  bool success = 1;
+  string message = 2;
+}

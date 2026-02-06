@@ -1,0 +1,153 @@
+syntax = "proto3";
+package claw.objects;
+
+import "claw/common.proto";
+
+message Blob {
+  bytes data = 1;
+  string media_type = 2;
+}
+
+message TreeEntry {
+  string name = 1;
+  uint32 mode = 2;
+  claw.common.ObjectId object_id = 3;
+}
+
+message Tree {
+  repeated TreeEntry entries = 1;
+}
+
+message PatchOp {
+  string address = 1;
+  string op_type = 2;
+  bytes old_data = 3;
+  bytes new_data = 4;
+  uint64 context_hash = 5;
+}
+
+message Patch {
+  string target_path = 1;
+  string codec_id = 2;
+  claw.common.ObjectId base_object = 3;
+  claw.common.ObjectId result_object = 4;
+  repeated PatchOp ops = 5;
+  bytes codec_payload = 6;
+}
+
+message Revision {
+  claw.common.Ulid change_id = 1;
+  repeated claw.common.ObjectId parents = 2;
+  repeated claw.common.ObjectId patches = 3;
+  claw.common.ObjectId snapshot_base = 4;
+  claw.common.ObjectId tree = 5;
+  claw.common.ObjectId capsule_id = 6;
+  string author = 7;
+  uint64 created_at_ms = 8;
+  string summary = 9;
+  repeated string policy_evidence = 10;
+}
+
+message Snapshot {
+  claw.common.ObjectId tree_root = 1;
+  claw.common.ObjectId revision_id = 2;
+  uint64 created_at_ms = 3;
+}
+
+message Intent {
+  claw.common.Ulid id = 1;
+  string title = 2;
+  string goal = 3;
+  repeated string constraints = 4;
+  repeated string acceptance_tests = 5;
+  repeated string links = 6;
+  repeated string policy_refs = 7;
+  repeated string agents = 8;
+  repeated string change_ids = 9;
+  repeated string depends_on = 10;
+  repeated string supersedes = 11;
+  string status = 12;
+  uint64 created_at_ms = 13;
+  uint64 updated_at_ms = 14;
+}
+
+message Change {
+  claw.common.Ulid id = 1;
+  claw.common.Ulid intent_id = 2;
+  claw.common.ObjectId head_revision = 3;
+  string workstream_id = 4;
+  string status = 5;
+  uint64 created_at_ms = 6;
+  uint64 updated_at_ms = 7;
+}
+
+message Conflict {
+  claw.common.ObjectId base_revision = 1;
+  claw.common.ObjectId left_revision = 2;
+  claw.common.ObjectId right_revision = 3;
+  string file_path = 4;
+  string codec_id = 5;
+  repeated claw.common.ObjectId left_patch_ids = 6;
+  repeated claw.common.ObjectId right_patch_ids = 7;
+  repeated claw.common.ObjectId resolution_patch_ids = 8;
+  string status = 9;
+  uint64 created_at_ms = 10;
+}
+
+message Evidence {
+  string name = 1;
+  string status = 2;
+  uint64 duration_ms = 3;
+  repeated string artifact_refs = 4;
+  string summary = 5;
+}
+
+message CapsulePublic {
+  string agent_id = 1;
+  string agent_version = 2;
+  string toolchain_digest = 3;
+  string env_fingerprint = 4;
+  repeated Evidence evidence = 5;
+}
+
+message CapsuleSignature {
+  string signer_id = 1;
+  bytes signature = 2;
+}
+
+message Capsule {
+  claw.common.ObjectId revision_id = 1;
+  CapsulePublic public_fields = 2;
+  bytes encrypted_private = 3;
+  string encryption = 4;
+  string key_id = 5;
+  repeated CapsuleSignature signatures = 6;
+}
+
+message Policy {
+  string policy_id = 1;
+  repeated string required_checks = 2;
+  repeated string required_reviewers = 3;
+  repeated string sensitive_paths = 4;
+  bool quarantine_lane = 5;
+  string min_trust_score = 6;
+  string visibility = 7;
+}
+
+message Workstream {
+  string workstream_id = 1;
+  repeated claw.common.Ulid change_stack = 2;
+}
+
+message RefLogEntry {
+  claw.common.ObjectId old_target = 1;
+  claw.common.ObjectId new_target = 2;
+  string author = 3;
+  string message = 4;
+  uint64 timestamp = 5;
+}
+
+message RefLog {
+  string ref_name = 1;
+  repeated RefLogEntry entries = 2;
+}

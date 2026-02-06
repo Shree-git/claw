@@ -1,0 +1,21 @@
+syntax = "proto3";
+package claw.event;
+
+import "claw/common.proto";
+
+service EventStreamService {
+  rpc Subscribe(SubscribeRequest) returns (stream Event);
+}
+
+message SubscribeRequest {
+  repeated string event_types = 1;
+  string ref_prefix = 2;
+}
+
+message Event {
+  string event_type = 1;
+  uint64 timestamp = 2;
+  string ref_name = 3;
+  claw.common.ObjectId object_id = 4;
+  string message = 5;
+}

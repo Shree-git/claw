@@ -1,0 +1,25 @@
+[package]
+name = "claw-core"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+blake3 = { workspace = true }
+data-encoding = { workspace = true }
+crc32fast = { workspace = true }
+hex = { workspace = true }
+zstd = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+bytes = { workspace = true }
+ulid = { workspace = true }
+rand = { workspace = true }
+prost = { workspace = true }
+
+[build-dependencies]
+prost-build = "0.13"
+
+[dev-dependencies]
+proptest = { workspace = true }

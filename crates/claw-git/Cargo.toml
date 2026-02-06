@@ -1,0 +1,11 @@
+[package]
+name = "claw-git"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+claw-core = { workspace = true }
+claw-store = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }

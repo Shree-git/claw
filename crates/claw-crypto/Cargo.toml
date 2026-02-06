@@ -1,0 +1,16 @@
+[package]
+name = "claw-crypto"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+claw-core = { workspace = true }
+blake3 = { workspace = true }
+ed25519-dalek = { workspace = true }
+chacha20poly1305 = "0.10"
+hex = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

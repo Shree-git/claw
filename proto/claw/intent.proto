@@ -1,0 +1,50 @@
+syntax = "proto3";
+package claw.intent;
+
+import "claw/common.proto";
+import "claw/objects.proto";
+
+service IntentService {
+  rpc Create(CreateIntentRequest) returns (CreateIntentResponse);
+  rpc Get(GetIntentRequest) returns (GetIntentResponse);
+  rpc List(ListIntentsRequest) returns (ListIntentsResponse);
+  rpc Update(UpdateIntentRequest) returns (UpdateIntentResponse);
+}
+
+message CreateIntentRequest {
+  string title = 1;
+  string description = 2;
+  string author = 3;
+  repeated string labels = 4;
+}
+
+message CreateIntentResponse {
+  claw.objects.Intent intent = 1;
+}
+
+message GetIntentRequest {
+  claw.common.Ulid id = 1;
+}
+
+message GetIntentResponse {
+  claw.objects.Intent intent = 1;
+}
+
+message ListIntentsRequest {
+  string status_filter = 1;
+}
+
+message ListIntentsResponse {
+  repeated claw.objects.Intent intents = 1;
+}
+
+message UpdateIntentRequest {
+  claw.common.Ulid id = 1;
+  string status = 2;
+  string title = 3;
+  string description = 4;
+}
+
+message UpdateIntentResponse {
+  claw.objects.Intent intent = 1;
+}

@@ -1,0 +1,38 @@
+syntax = "proto3";
+package claw.capsule;
+
+import "claw/common.proto";
+import "claw/objects.proto";
+
+service CapsuleService {
+  rpc Create(CreateCapsuleRequest) returns (CreateCapsuleResponse);
+  rpc Get(GetCapsuleRequest) returns (GetCapsuleResponse);
+  rpc Verify(VerifyCapsuleRequest) returns (VerifyCapsuleResponse);
+}
+
+message CreateCapsuleRequest {
+  claw.common.ObjectId revision_id = 1;
+  claw.objects.CapsulePublic public_fields = 2;
+  bytes private_data = 3;
+}
+
+message CreateCapsuleResponse {
+  claw.objects.Capsule capsule = 1;
+}
+
+message GetCapsuleRequest {
+  claw.common.ObjectId revision_id = 1;
+}
+
+message GetCapsuleResponse {
+  claw.objects.Capsule capsule = 1;
+}
+
+message VerifyCapsuleRequest {
+  claw.common.ObjectId revision_id = 1;
+}
+
+message VerifyCapsuleResponse {
+  bool valid = 1;
+  string message = 2;
+}

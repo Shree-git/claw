@@ -1,0 +1,19 @@
+[package]
+name = "claw-sync"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+claw-core = { workspace = true }
+claw-store = { workspace = true }
+prost = { workspace = true }
+prost-types = { workspace = true }
+tonic = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }

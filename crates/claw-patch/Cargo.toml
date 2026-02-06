@@ -1,0 +1,15 @@
+[package]
+name = "claw-patch"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+claw-core = { workspace = true }
+similar = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

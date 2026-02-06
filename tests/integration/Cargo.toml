@@ -1,0 +1,22 @@
+[package]
+name = "claw-integration-tests"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[[test]]
+name = "spec_tests"
+path = "spec_tests.rs"
+
+[dependencies]
+claw-core = { workspace = true }
+claw-store = { workspace = true }
+claw-patch = { workspace = true }
+claw-merge = { workspace = true }
+claw-crypto = { workspace = true }
+claw-policy = { workspace = true }
+claw-sync = { workspace = true }
+claw-git = { workspace = true }
+tempfile = { workspace = true }
+serde_json = { workspace = true }

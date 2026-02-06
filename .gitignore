@@ -1,0 +1,4 @@
+/target
+*.db
+.claw/
+firebase-debug.log
