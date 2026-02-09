@@ -80,9 +80,11 @@ pub fn run(args: DiffArgs) -> anyhow::Result<()> {
 
         if let Some(codec) = codec {
             if codec.id().starts_with("json") {
-                // JSON diff
-                let ops = codec.diff(&old_bytes, &new_bytes)?;
-                print!("{}", diff_render::render_json_diff(&change.path, &ops));
+                // JSON diff — fall back to unified text if parsing fails (e.g. added/deleted files)
+                match codec.diff(&old_bytes, &new_bytes) {
+                    Ok(ops) => print!("{}", diff_render::render_json_diff(&change.path, &ops)),
+                    Err(_) => print!("{}", diff_render::render_unified_diff(&change.path, &old_bytes, &new_bytes)),
+                }
             } else {
                 // Text diff
                 print!("{}", diff_render::render_unified_diff(&change.path, &old_bytes, &new_bytes));
