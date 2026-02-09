@@ -1,6 +1,7 @@
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
+mod auth_store;
 mod commands;
 mod config;
 mod conflict_writer;

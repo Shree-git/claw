@@ -47,6 +47,8 @@ tonic-build = "0.12"
 # Async
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Storage
 redb = "2.4"
@@ -68,6 +70,10 @@ thiserror = "2.0"
 
 # Bytes
 bytes = "1.9"
+base64 = "0.22"
+sha2 = "0.10"
+urlencoding = "2.1"
+webbrowser = "1.0"
 
 # Diffing
 similar = "2.6"

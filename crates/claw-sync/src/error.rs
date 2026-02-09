@@ -16,4 +16,8 @@ pub enum SyncError {
     Grpc(#[from] tonic::Status),
     #[error("transport error: {0}")]
     Transport(#[from] tonic::transport::Error),
+    #[error("http error: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("serialization error: {0}")]
+    Serde(#[from] serde_json::Error),
 }

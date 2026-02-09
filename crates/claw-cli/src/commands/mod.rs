@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod auth;
 pub mod branch;
 pub mod change;
 pub mod checkout;
@@ -62,6 +63,8 @@ pub enum Commands {
     Resolve(resolve::ResolveArgs),
     /// Manage remote repositories
     Remote(remote::RemoteArgs),
+    /// Authenticate with ClawLab remotes
+    Auth(auth::AuthArgs),
 }
 
 impl Commands {
@@ -87,6 +90,7 @@ impl Commands {
             Commands::Show(args) => show::run(args),
             Commands::Resolve(args) => resolve::run(args),
             Commands::Remote(args) => remote::run(args),
+            Commands::Auth(args) => auth::run(args).await,
         }
     }
 }

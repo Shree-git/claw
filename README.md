@@ -159,7 +159,8 @@ The architecture supports adding codecs for YAML, TOML, SQL migrations, Protobuf
 
 ### Sync protocol
 
-Claw uses **gRPC with HTTP/2 streaming** for network operations:
+Claw uses **gRPC with HTTP/2 streaming** for network operations, with an optional
+HTTP transport adapter for ClawLab-hosted remotes:
 
 ```protobuf
 service SyncService {
@@ -212,6 +213,7 @@ claw show <object-id>        Inspect any object
 claw resolve <subcommand>    Manage merge conflicts
 claw agent <subcommand>      Register and manage agent identities
 claw remote <subcommand>     Manage remote repositories
+claw auth <subcommand>       Manage ClawLab auth profiles and tokens
 claw sync <remote>           Sync with a remote repository
 claw daemon                  Run the gRPC sync server
 claw patch <subcommand>      Create and apply patches directly
