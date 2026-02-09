@@ -2,3 +2,4 @@
 *.db
 .claw/
 firebase-debug.log
+video/
