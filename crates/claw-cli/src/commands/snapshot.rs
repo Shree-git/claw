@@ -137,18 +137,19 @@ pub fn run(args: SnapshotArgs) -> anyhow::Result<()> {
                     _ => vec![],
                 };
 
-                let ops = codec.diff(&old_content, &new_content)?;
-                if !ops.is_empty() {
-                    let patch = Patch {
-                        target_path: change.path.clone(),
-                        codec_id: codec.id().to_string(),
-                        base_object: change.old_id,
-                        result_object: change.new_id,
-                        ops,
-                        codec_payload: None,
-                    };
-                    let patch_id = store.store_object(&Object::Patch(patch))?;
-                    patches.push(patch_id);
+                if let Ok(ops) = codec.diff(&old_content, &new_content) {
+                    if !ops.is_empty() {
+                        let patch = Patch {
+                            target_path: change.path.clone(),
+                            codec_id: codec.id().to_string(),
+                            base_object: change.old_id,
+                            result_object: change.new_id,
+                            ops,
+                            codec_payload: None,
+                        };
+                        let patch_id = store.store_object(&Object::Patch(patch))?;
+                        patches.push(patch_id);
+                    }
                 }
             }
             // No codec for this extension - still track it via the tree change
