@@ -8,7 +8,6 @@ use claw_store::{ClawStore, HeadState};
 
 use crate::config::find_repo_root;
 use crate::conflict_writer;
-use crate::ignore::IgnoreRules;
 use crate::merge_state::{self, ConflictEntry, MergeInfo, MergeState};
 use crate::worktree;
 
