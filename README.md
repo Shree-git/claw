@@ -96,7 +96,7 @@ crates/
 ├── claw-policy     Policy evaluation and visibility enforcement
 ├── claw-sync       gRPC sync protocol with partial clone
 ├── claw-git        Bidirectional Git export/import
-└── claw-cli        The `claw` binary
+└── claw            The `claw` binary
 
 proto/              Protocol Buffer definitions for all gRPC services
 ```
@@ -244,22 +244,101 @@ claw git-export              Export to Git format
 
 **The thesis:** If your project is 100% human-written, Git's provenance model is probably sufficient. If agents are submitting changes autonomously, Git has no way to enforce "only integrate if the agent proved it ran the test suite" without external infrastructure. Claw bakes it in.
 
-## Building from source
+## Install
 
-Requires [Rust](https://rustup.rs/) (stable) and [protoc](https://grpc.io/docs/protoc-installation/) (for Protocol Buffer compilation).
+Claw ships prebuilt binaries for macOS, Linux, and Windows in GitHub Releases, so you **do not**
+need Rust/cargo to get started.
+
+### macOS
+
+**Homebrew (recommended)**
+
+```bash
+brew install shree-git/tap/claw
+```
+
+Or, if you prefer:
+
+```bash
+brew tap shree-git/tap
+brew install claw
+```
+
+**Installer script (no Homebrew)**
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/shree-git/claw/releases/latest/download/claw-installer.sh | sh
+```
+
+Install to a custom location:
+
+```bash
+CLAW_HOME="$HOME/.claw" \
+  curl --proto '=https' --tlsv1.2 -LsSf https://github.com/shree-git/claw/releases/latest/download/claw-installer.sh | sh
+```
+
+### Linux
+
+**Installer script (recommended)**
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/shree-git/claw/releases/latest/download/claw-installer.sh | sh
+```
+
+Install to a custom location:
+
+```bash
+CLAW_HOME="$HOME/.claw" \
+  curl --proto '=https' --tlsv1.2 -LsSf https://github.com/shree-git/claw/releases/latest/download/claw-installer.sh | sh
+```
+
+Notes:
+
+- On NixOS (or other unusual environments), prefer manual install (download a release archive and place `claw` somewhere on your `PATH`) or build from source.
+
+### Windows
+
+**WinGet (recommended)**
+
+```powershell
+winget install ShreeGit.Claw
+```
+
+**MSI (manual)**
+
+Download the latest `.msi` from GitHub Releases and run it. The installer adds `claw` to `PATH`.
+
+**PowerShell installer (no MSI)**
+
+```powershell
+iwr -useb https://github.com/shree-git/claw/releases/latest/download/claw-installer.ps1 | iex
+```
+
+### Build from source (any OS)
+
+Requires [Rust](https://rustup.rs/) (stable). Claw uses a vendored `protoc` by default, so you
+generally **don't** need to install Protocol Buffers tooling. If you want to force a specific
+`protoc`, set `PROTOC=/path/to/protoc` before building.
 
 ```bash
 git clone https://github.com/shree-git/claw.git
 cd claw
-cargo build --release
+cargo build --release -p claw
+./target/release/claw --help
 ```
-
-The binary is at `target/release/claw`.
 
 Run tests:
 
 ```bash
 cargo test --workspace
+```
+
+### Rust users (cargo)
+
+If you already have Rust installed, you can install directly with cargo:
+
+```bash
+cargo install --git https://github.com/shree-git/claw.git --package claw --locked
 ```
 
 ## Project status

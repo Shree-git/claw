@@ -1,8 +1,18 @@
 [package]
-name = "claw-cli"
+name = "claw"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+authors.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[package.metadata.wix]
+upgrade-guid = "A0125272-4F24-4EBE-8DE9-805BA0342C28"
+path-guid = "CC3E2CC8-5DEF-48FF-8708-A2F785DEB9FD"
+license = false
+eula = false
 
 [[bin]]
 name = "claw"

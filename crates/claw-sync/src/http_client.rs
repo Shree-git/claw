@@ -6,6 +6,7 @@ use claw_core::cof::{cof_decode, cof_encode};
 use claw_core::id::ObjectId;
 use claw_core::object::Object;
 use claw_store::ClawStore;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::proto;
@@ -37,12 +38,27 @@ impl HttpSyncClient {
     }
 
     fn request(&self, method: reqwest::Method, url: String) -> reqwest::RequestBuilder {
-        let builder = self.client.request(method, url);
-        if let Some(token) = &self.bearer_token {
-            builder.bearer_auth(token)
-        } else {
-            builder
+        let mut builder = self.client.request(method.clone(), url);
+
+        // ClawLab requires an idempotency key for mutating requests.
+        if matches!(
+            method,
+            reqwest::Method::POST
+                | reqwest::Method::PUT
+                | reqwest::Method::PATCH
+                | reqwest::Method::DELETE
+        ) {
+            let mut bytes = [0_u8; 16];
+            rand::thread_rng().fill_bytes(&mut bytes);
+            let key = BASE64_URL_SAFE_NO_PAD.encode(bytes);
+            builder = builder.header("idempotency-key", key);
         }
+
+        if let Some(token) = &self.bearer_token {
+            builder = builder.bearer_auth(token);
+        }
+
+        builder
     }
 }
 

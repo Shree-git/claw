@@ -19,7 +19,8 @@ rand = { workspace = true }
 prost = { workspace = true }
 
 [build-dependencies]
-prost-build = "0.13"
+prost-build = { workspace = true }
+protoc-bin-vendored = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

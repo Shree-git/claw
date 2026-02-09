@@ -5,13 +5,13 @@ Thanks for your interest in contributing.
 ## Prerequisites
 
 - Rust toolchain via `rustup` (stable channel)
-- `protoc` (Protocol Buffers compiler)
 - Git
+- Optional: `protoc` (Protocol Buffers compiler) if you want to override the vendored one (set `PROTOC=/path/to/protoc`)
 
 ## Local Setup
 
 ```bash
-git clone git@github.com:Shree-git/claw.git
+git clone https://github.com/shree-git/claw.git
 cd claw
 cargo build
 ```
