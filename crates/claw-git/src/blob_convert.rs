@@ -1,4 +1,3 @@
-
 /// Convert claw blob data to git blob object bytes.
 /// Git blob format: "blob <size>\0<data>"
 pub fn to_git_blob(data: &[u8]) -> Vec<u8> {
@@ -11,7 +10,6 @@ pub fn to_git_blob(data: &[u8]) -> Vec<u8> {
 
 /// Compute the SHA-1 hash of git object bytes.
 pub fn git_sha1(data: &[u8]) -> [u8; 20] {
-    
     // Simple SHA-1 implementation using the sha1 algorithm
     // We implement a minimal SHA-1 here to avoid pulling in another dependency
     sha1_hash(data)
@@ -52,7 +50,7 @@ fn sha1_hash(data: &[u8]) -> [u8; 20] {
 
         let (mut a, mut b, mut c, mut d, mut e) = (h0, h1, h2, h3, h4);
 
-        for i in 0..80 {
+        for (i, wi) in w.iter().enumerate() {
             let (f, k) = match i {
                 0..=19 => ((b & c) | ((!b) & d), 0x5A827999u32),
                 20..=39 => (b ^ c ^ d, 0x6ED9EBA1u32),
@@ -65,7 +63,7 @@ fn sha1_hash(data: &[u8]) -> [u8; 20] {
                 .wrapping_add(f)
                 .wrapping_add(e)
                 .wrapping_add(k)
-                .wrapping_add(w[i]);
+                .wrapping_add(*wi);
             e = d;
             d = c;
             c = b.rotate_left(30);

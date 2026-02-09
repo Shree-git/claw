@@ -12,10 +12,10 @@ impl Codec for JsonTreeCodec {
     }
 
     fn diff(&self, old: &[u8], new: &[u8]) -> Result<Vec<PatchOp>, PatchError> {
-        let old_val: Value = serde_json::from_slice(old)
-            .map_err(|e| PatchError::InvalidJson(e.to_string()))?;
-        let new_val: Value = serde_json::from_slice(new)
-            .map_err(|e| PatchError::InvalidJson(e.to_string()))?;
+        let old_val: Value =
+            serde_json::from_slice(old).map_err(|e| PatchError::InvalidJson(e.to_string()))?;
+        let new_val: Value =
+            serde_json::from_slice(new).map_err(|e| PatchError::InvalidJson(e.to_string()))?;
 
         let mut ops = Vec::new();
         diff_values("", &old_val, &new_val, &mut ops);
@@ -23,15 +23,14 @@ impl Codec for JsonTreeCodec {
     }
 
     fn apply(&self, base: &[u8], ops: &[PatchOp]) -> Result<Vec<u8>, PatchError> {
-        let mut val: Value = serde_json::from_slice(base)
-            .map_err(|e| PatchError::InvalidJson(e.to_string()))?;
+        let mut val: Value =
+            serde_json::from_slice(base).map_err(|e| PatchError::InvalidJson(e.to_string()))?;
 
         for op in ops {
             apply_op(&mut val, op)?;
         }
 
-        serde_json::to_vec_pretty(&val)
-            .map_err(|e| PatchError::ApplyFailed(e.to_string()))
+        serde_json::to_vec_pretty(&val).map_err(|e| PatchError::ApplyFailed(e.to_string()))
     }
 
     fn invert(&self, ops: &[PatchOp]) -> Result<Vec<PatchOp>, PatchError> {
@@ -66,7 +65,11 @@ impl Codec for JsonTreeCodec {
         Ok(inverted)
     }
 
-    fn commute(&self, left: &[PatchOp], right: &[PatchOp]) -> Result<(Vec<PatchOp>, Vec<PatchOp>), PatchError> {
+    fn commute(
+        &self,
+        left: &[PatchOp],
+        right: &[PatchOp],
+    ) -> Result<(Vec<PatchOp>, Vec<PatchOp>), PatchError> {
         // JSON tree commutation: independent paths commute, same path = conflict
         for l in left {
             for r in right {
@@ -89,16 +92,15 @@ impl Codec for JsonTreeCodec {
     }
 
     fn merge3(&self, base: &[u8], left: &[u8], right: &[u8]) -> Result<Vec<u8>, PatchError> {
-        let base_val: Value = serde_json::from_slice(base)
-            .map_err(|e| PatchError::InvalidJson(e.to_string()))?;
-        let left_val: Value = serde_json::from_slice(left)
-            .map_err(|e| PatchError::InvalidJson(e.to_string()))?;
-        let right_val: Value = serde_json::from_slice(right)
-            .map_err(|e| PatchError::InvalidJson(e.to_string()))?;
+        let base_val: Value =
+            serde_json::from_slice(base).map_err(|e| PatchError::InvalidJson(e.to_string()))?;
+        let left_val: Value =
+            serde_json::from_slice(left).map_err(|e| PatchError::InvalidJson(e.to_string()))?;
+        let right_val: Value =
+            serde_json::from_slice(right).map_err(|e| PatchError::InvalidJson(e.to_string()))?;
 
         let merged = merge3_values(&base_val, &left_val, &right_val)?;
-        serde_json::to_vec_pretty(&merged)
-            .map_err(|e| PatchError::Merge3Failed(e.to_string()))
+        serde_json::to_vec_pretty(&merged).map_err(|e| PatchError::Merge3Failed(e.to_string()))
     }
 }
 
@@ -180,13 +182,19 @@ fn apply_op(val: &mut Value, op: &PatchOp) -> Result<(), PatchError> {
         // Root replacement
         match op.op_type.as_str() {
             "replace" => {
-                let new_val: Value = serde_json::from_slice(
-                    op.new_data.as_ref()
-                        .ok_or_else(|| PatchError::ApplyFailed("replace missing new_data".into()))?,
-                ).map_err(|e| PatchError::ApplyFailed(e.to_string()))?;
+                let new_val: Value =
+                    serde_json::from_slice(op.new_data.as_ref().ok_or_else(|| {
+                        PatchError::ApplyFailed("replace missing new_data".into())
+                    })?)
+                    .map_err(|e| PatchError::ApplyFailed(e.to_string()))?;
                 *val = new_val;
             }
-            _ => return Err(PatchError::ApplyFailed(format!("unsupported root op: {}", op.op_type))),
+            _ => {
+                return Err(PatchError::ApplyFailed(format!(
+                    "unsupported root op: {}",
+                    op.op_type
+                )))
+            }
         }
         return Ok(());
     }
@@ -203,60 +211,77 @@ fn apply_op(val: &mut Value, op: &PatchOp) -> Result<(), PatchError> {
     match op.op_type.as_str() {
         "insert" => {
             let new_val: Value = serde_json::from_slice(
-                op.new_data.as_ref()
+                op.new_data
+                    .as_ref()
                     .ok_or_else(|| PatchError::ApplyFailed("insert missing new_data".into()))?,
-            ).map_err(|e| PatchError::ApplyFailed(e.to_string()))?;
+            )
+            .map_err(|e| PatchError::ApplyFailed(e.to_string()))?;
 
             match current {
                 Value::Object(map) => {
                     map.insert(last_key.to_string(), new_val);
                 }
                 Value::Array(arr) => {
-                    let idx: usize = last_key.parse()
+                    let idx: usize = last_key
+                        .parse()
                         .map_err(|_| PatchError::ApplyFailed("invalid array index".into()))?;
                     if idx > arr.len() {
                         return Err(PatchError::ApplyFailed("array index out of bounds".into()));
                     }
                     arr.insert(idx, new_val);
                 }
-                _ => return Err(PatchError::ApplyFailed("cannot insert into non-container".into())),
+                _ => {
+                    return Err(PatchError::ApplyFailed(
+                        "cannot insert into non-container".into(),
+                    ))
+                }
             }
         }
-        "delete" => {
-            match current {
-                Value::Object(map) => {
-                    map.remove(last_key);
-                }
-                Value::Array(arr) => {
-                    let idx: usize = last_key.parse()
-                        .map_err(|_| PatchError::ApplyFailed("invalid array index".into()))?;
-                    if idx >= arr.len() {
-                        return Err(PatchError::ApplyFailed("array index out of bounds".into()));
-                    }
-                    arr.remove(idx);
-                }
-                _ => return Err(PatchError::ApplyFailed("cannot delete from non-container".into())),
+        "delete" => match current {
+            Value::Object(map) => {
+                map.remove(last_key);
             }
-        }
+            Value::Array(arr) => {
+                let idx: usize = last_key
+                    .parse()
+                    .map_err(|_| PatchError::ApplyFailed("invalid array index".into()))?;
+                if idx >= arr.len() {
+                    return Err(PatchError::ApplyFailed("array index out of bounds".into()));
+                }
+                arr.remove(idx);
+            }
+            _ => {
+                return Err(PatchError::ApplyFailed(
+                    "cannot delete from non-container".into(),
+                ))
+            }
+        },
         "replace" => {
             let new_val: Value = serde_json::from_slice(
-                op.new_data.as_ref()
+                op.new_data
+                    .as_ref()
                     .ok_or_else(|| PatchError::ApplyFailed("replace missing new_data".into()))?,
-            ).map_err(|e| PatchError::ApplyFailed(e.to_string()))?;
+            )
+            .map_err(|e| PatchError::ApplyFailed(e.to_string()))?;
 
             match current {
                 Value::Object(map) => {
                     map.insert(last_key.to_string(), new_val);
                 }
                 Value::Array(arr) => {
-                    let idx: usize = last_key.parse()
+                    let idx: usize = last_key
+                        .parse()
                         .map_err(|_| PatchError::ApplyFailed("invalid array index".into()))?;
                     if idx >= arr.len() {
                         return Err(PatchError::ApplyFailed("array index out of bounds".into()));
                     }
                     arr[idx] = new_val;
                 }
-                _ => return Err(PatchError::ApplyFailed("cannot replace in non-container".into())),
+                _ => {
+                    return Err(PatchError::ApplyFailed(
+                        "cannot replace in non-container".into(),
+                    ))
+                }
             }
         }
         other => return Err(PatchError::ApplyFailed(format!("unknown op type: {other}"))),
@@ -277,7 +302,9 @@ fn navigate_mut<'a>(val: &'a mut Value, key: &str) -> Result<&'a mut Value, Patc
             arr.get_mut(idx)
                 .ok_or_else(|| PatchError::ApplyFailed(format!("index out of bounds: {idx}")))
         }
-        _ => Err(PatchError::ApplyFailed(format!("cannot navigate into scalar at {key}"))),
+        _ => Err(PatchError::ApplyFailed(format!(
+            "cannot navigate into scalar at {key}"
+        ))),
     }
 }
 
@@ -352,18 +379,18 @@ fn merge3_values(base: &Value, left: &Value, right: &Value) -> Result<Value, Pat
                             // Left didn't change, right deleted - accept deletion
                         } else {
                             // Left modified, right deleted - conflict
-                            return Err(PatchError::Merge3Failed(
-                                format!("conflict at /{key}: left modified, right deleted"),
-                            ));
+                            return Err(PatchError::Merge3Failed(format!(
+                                "conflict at /{key}: left modified, right deleted"
+                            )));
                         }
                     }
                     (Some(_), None, Some(_rv)) => {
                         if r == b {
                             // Right didn't change, left deleted - accept deletion
                         } else {
-                            return Err(PatchError::Merge3Failed(
-                                format!("conflict at /{key}: left deleted, right modified"),
-                            ));
+                            return Err(PatchError::Merge3Failed(format!(
+                                "conflict at /{key}: left deleted, right modified"
+                            )));
                         }
                     }
                     (None, Some(lv), Some(rv)) => {
@@ -371,9 +398,9 @@ fn merge3_values(base: &Value, left: &Value, right: &Value) -> Result<Value, Pat
                         if lv == rv {
                             merged.insert(key.clone(), lv.clone());
                         } else {
-                            return Err(PatchError::Merge3Failed(
-                                format!("conflict at /{key}: both sides added different values"),
-                            ));
+                            return Err(PatchError::Merge3Failed(format!(
+                                "conflict at /{key}: both sides added different values"
+                            )));
                         }
                     }
                     (None, Some(lv), None) => {
@@ -456,7 +483,10 @@ mod tests {
         assert_eq!(path_relationship("/a/b", "/a/b"), PathRelation::Equal);
         assert_eq!(path_relationship("/a", "/a/b"), PathRelation::AncestorOf);
         assert_eq!(path_relationship("/a/b", "/a"), PathRelation::DescendantOf);
-        assert_eq!(path_relationship("/a/0", "/a/1"), PathRelation::SiblingArrayElements);
+        assert_eq!(
+            path_relationship("/a/0", "/a/1"),
+            PathRelation::SiblingArrayElements
+        );
         assert_eq!(path_relationship("/a", "/b"), PathRelation::Independent);
     }
 }

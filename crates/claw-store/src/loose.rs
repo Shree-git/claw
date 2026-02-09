@@ -10,7 +10,11 @@ pub fn loose_object_path(layout: &RepoLayout, id: &ObjectId) -> PathBuf {
     dir.join(id.shard_suffix())
 }
 
-pub fn write_loose_object(layout: &RepoLayout, id: &ObjectId, data: &[u8]) -> Result<(), StoreError> {
+pub fn write_loose_object(
+    layout: &RepoLayout,
+    id: &ObjectId,
+    data: &[u8],
+) -> Result<(), StoreError> {
     let path = loose_object_path(layout, id);
 
     if path.exists() {
@@ -26,8 +30,7 @@ pub fn write_loose_object(layout: &RepoLayout, id: &ObjectId, data: &[u8]) -> Re
     let dir = path.parent().unwrap();
     let temp = tempfile::NamedTempFile::new_in(dir)?;
     std::fs::write(temp.path(), data)?;
-    temp.persist(&path)
-        .map_err(|e| StoreError::Io(e.error))?;
+    temp.persist(&path).map_err(|e| StoreError::Io(e.error))?;
 
     Ok(())
 }

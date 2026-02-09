@@ -28,7 +28,10 @@ impl SyncClient {
         Ok(resp.into_inner())
     }
 
-    pub async fn advertise_refs(&mut self, prefix: &str) -> Result<Vec<(String, ObjectId)>, SyncError> {
+    pub async fn advertise_refs(
+        &mut self,
+        prefix: &str,
+    ) -> Result<Vec<(String, ObjectId)>, SyncError> {
         let resp = self
             .client
             .advertise_refs(AdvertiseRefsRequest {

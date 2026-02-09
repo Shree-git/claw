@@ -52,6 +52,7 @@ fn change_to_proto(c: &Change) -> crate::proto::objects::Change {
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn parse_status(s: &str) -> Result<ChangeStatus, Status> {
     match s {
         "open" => Ok(ChangeStatus::Open),
@@ -147,9 +148,10 @@ impl ChangeService for ChangeServer {
             .list_refs("changes")
             .map_err(|e| Status::internal(e.to_string()))?;
 
-        let filter_intent: Option<[u8; 16]> = req.intent_id.as_ref().and_then(|u| {
-            u.data.as_slice().try_into().ok()
-        });
+        let filter_intent: Option<[u8; 16]> = req
+            .intent_id
+            .as_ref()
+            .and_then(|u| u.data.as_slice().try_into().ok());
 
         let mut changes = Vec::new();
         for (_, obj_id) in &refs {
@@ -159,9 +161,7 @@ impl ChangeService for ChangeServer {
                         continue;
                     }
                 }
-                if req.status_filter.is_empty()
-                    || status_matches(&c.status, &req.status_filter)
-                {
+                if req.status_filter.is_empty() || status_matches(&c.status, &req.status_filter) {
                     changes.push(change_to_proto(&c));
                 }
             }

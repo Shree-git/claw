@@ -29,12 +29,20 @@ impl<'a> GitExporter<'a> {
     }
 
     /// Export the claw DAG starting from a revision to a git object directory.
-    pub fn export(&mut self, head: &ObjectId, git_objects_dir: &Path) -> Result<[u8; 20], GitExportError> {
+    pub fn export(
+        &mut self,
+        head: &ObjectId,
+        git_objects_dir: &Path,
+    ) -> Result<[u8; 20], GitExportError> {
         std::fs::create_dir_all(git_objects_dir)?;
         self.export_revision(head, git_objects_dir)
     }
 
-    fn export_revision(&mut self, rev_id: &ObjectId, git_dir: &Path) -> Result<[u8; 20], GitExportError> {
+    fn export_revision(
+        &mut self,
+        rev_id: &ObjectId,
+        git_dir: &Path,
+    ) -> Result<[u8; 20], GitExportError> {
         if let Some(sha1) = self.sha1_map.get(rev_id) {
             return Ok(*sha1);
         }
@@ -53,7 +61,9 @@ impl<'a> GitExporter<'a> {
         }
 
         // Export tree
-        let tree_id = rev.tree.ok_or_else(|| GitExportError::InvalidType("revision has no tree".into()))?;
+        let tree_id = rev
+            .tree
+            .ok_or_else(|| GitExportError::InvalidType("revision has no tree".into()))?;
         let tree_sha1 = self.export_tree(&tree_id, git_dir)?;
 
         // Resolve intent_id from change if available
@@ -69,7 +79,14 @@ impl<'a> GitExporter<'a> {
         });
 
         // Build commit
-        let commit_data = to_git_commit(&rev, &tree_sha1, &parent_sha1s, rev_id, rev.change_id.as_ref(), intent_id.as_ref());
+        let commit_data = to_git_commit(
+            &rev,
+            &tree_sha1,
+            &parent_sha1s,
+            rev_id,
+            rev.change_id.as_ref(),
+            intent_id.as_ref(),
+        );
         let sha1 = git_sha1(&commit_data);
         self.write_git_object(git_dir, &sha1, &commit_data)?;
         self.sha1_map.insert(*rev_id, sha1);
@@ -77,7 +94,11 @@ impl<'a> GitExporter<'a> {
         Ok(sha1)
     }
 
-    fn export_tree(&mut self, tree_id: &ObjectId, git_dir: &Path) -> Result<[u8; 20], GitExportError> {
+    fn export_tree(
+        &mut self,
+        tree_id: &ObjectId,
+        git_dir: &Path,
+    ) -> Result<[u8; 20], GitExportError> {
         if let Some(sha1) = self.sha1_map.get(tree_id) {
             return Ok(*sha1);
         }
@@ -110,7 +131,11 @@ impl<'a> GitExporter<'a> {
         Ok(sha1)
     }
 
-    fn export_blob(&mut self, blob_id: &ObjectId, git_dir: &Path) -> Result<[u8; 20], GitExportError> {
+    fn export_blob(
+        &mut self,
+        blob_id: &ObjectId,
+        git_dir: &Path,
+    ) -> Result<[u8; 20], GitExportError> {
         if let Some(sha1) = self.sha1_map.get(blob_id) {
             return Ok(*sha1);
         }
@@ -129,7 +154,12 @@ impl<'a> GitExporter<'a> {
         Ok(sha1)
     }
 
-    fn write_git_object(&self, git_dir: &Path, sha1: &[u8; 20], data: &[u8]) -> Result<(), GitExportError> {
+    fn write_git_object(
+        &self,
+        git_dir: &Path,
+        sha1: &[u8; 20],
+        data: &[u8],
+    ) -> Result<(), GitExportError> {
         let hex = hex::encode(sha1);
         let dir = git_dir.join(&hex[..2]);
         std::fs::create_dir_all(&dir)?;

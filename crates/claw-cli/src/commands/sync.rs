@@ -143,7 +143,10 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
 
             // Update working tree if the pulled ref matches HEAD's branch
             let head_state = store.read_head()?;
-            if let HeadState::Symbolic { ref_name: ref head_ref } = head_state {
+            if let HeadState::Symbolic {
+                ref_name: ref head_ref,
+            } = head_state
+            {
                 if *head_ref == ref_name {
                     let rev_obj = store.load_object(&remote_id)?;
                     if let Object::Revision(ref rev) = rev_obj {
@@ -178,9 +181,7 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
 
             // Materialize working tree from heads/main (or first available ref)
             let main_id = store.get_ref("heads/main")?;
-            let checkout_id = main_id.or_else(|| {
-                remote_refs.first().map(|(_, id)| *id)
-            });
+            let checkout_id = main_id.or_else(|| remote_refs.first().map(|(_, id)| *id));
             if let Some(rev_id) = checkout_id {
                 let rev_obj = store.load_object(&rev_id)?;
                 if let Object::Revision(ref rev) = rev_obj {
@@ -202,7 +203,12 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
             let content = toml::to_string_pretty(&remotes)?;
             std::fs::write(&config_path, content)?;
 
-            println!("Cloned {} ({} objects, {} refs)", remote, fetched.len(), remote_refs.len());
+            println!(
+                "Cloned {} ({} objects, {} refs)",
+                remote,
+                fetched.len(),
+                remote_refs.len()
+            );
         }
     }
     Ok(())

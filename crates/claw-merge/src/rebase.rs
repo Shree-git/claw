@@ -6,6 +6,8 @@ use claw_store::ClawStore;
 
 use crate::MergeError;
 
+type RebasedPatchSets = (Vec<Vec<PatchOp>>, Vec<Vec<PatchOp>>);
+
 /// Attempt to commute right patches past left patches using the codec's commute operation.
 /// Returns the reordered (right', left') patches if successful.
 pub fn commute_rebase(
@@ -14,7 +16,7 @@ pub fn commute_rebase(
     codec_id: &str,
     left_ids: &[ObjectId],
     right_ids: &[ObjectId],
-) -> Result<(Vec<Vec<PatchOp>>, Vec<Vec<PatchOp>>), MergeError> {
+) -> Result<RebasedPatchSets, MergeError> {
     let codec = registry.get(codec_id)?;
 
     let mut left_ops: Vec<Vec<PatchOp>> = Vec::new();

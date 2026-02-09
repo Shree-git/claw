@@ -101,7 +101,11 @@ pub fn run(args: LogArgs) -> anyhow::Result<()> {
         for entry in &entries {
             println!("revision {}", entry.revision_id);
             if entry.parents.len() > 1 {
-                let parent_strs: Vec<String> = entry.parents.iter().map(|p| p.to_hex()[..12].to_string()).collect();
+                let parent_strs: Vec<String> = entry
+                    .parents
+                    .iter()
+                    .map(|p| p.to_hex()[..12].to_string())
+                    .collect();
                 println!("Merge: {}", parent_strs.join(" "));
             }
             println!("Author: {}", entry.author);

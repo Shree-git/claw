@@ -78,16 +78,10 @@ pub fn run(args: StatusArgs) -> anyhow::Result<()> {
 
     if in_merge {
         if let Ok(ms) = merge_state::read_from(&claw_dir) {
-            println!(
-                "Merging: {} into {}",
-                ms.merge.right_ref, ms.merge.left_ref
-            );
+            println!("Merging: {} into {}", ms.merge.right_ref, ms.merge.left_ref);
             let unresolved: Vec<_> = ms.conflicts.iter().collect();
             if !unresolved.is_empty() {
-                println!(
-                    "{} unresolved conflict(s):",
-                    unresolved.len()
-                );
+                println!("{} unresolved conflict(s):", unresolved.len());
                 for c in &unresolved {
                     println!("  CONFLICT: {} ({})", c.file_path, c.codec_id);
                 }

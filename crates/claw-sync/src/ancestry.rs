@@ -5,7 +5,11 @@ use claw_core::object::Object;
 use claw_store::ClawStore;
 
 /// Check if `potential_ancestor` is an ancestor of `descendant` by BFS back from descendant.
-pub fn is_ancestor(store: &ClawStore, potential_ancestor: &ObjectId, descendant: &ObjectId) -> bool {
+pub fn is_ancestor(
+    store: &ClawStore,
+    potential_ancestor: &ObjectId,
+    descendant: &ObjectId,
+) -> bool {
     if potential_ancestor == descendant {
         return true;
     }
@@ -20,10 +24,8 @@ pub fn is_ancestor(store: &ClawStore, potential_ancestor: &ObjectId, descendant:
         if !visited.insert(id) {
             continue;
         }
-        if let Ok(obj) = store.load_object(&id) {
-            if let Object::Revision(rev) = obj {
-                queue.extend_from_slice(&rev.parents);
-            }
+        if let Ok(Object::Revision(rev)) = store.load_object(&id) {
+            queue.extend_from_slice(&rev.parents);
         }
     }
 

@@ -60,10 +60,7 @@ pub fn compute_want_have(
     local_objects: &HashSet<ObjectId>,
     remote_objects: &HashSet<ObjectId>,
 ) -> (Vec<ObjectId>, Vec<ObjectId>) {
-    let want: Vec<ObjectId> = remote_objects
-        .difference(local_objects)
-        .copied()
-        .collect();
+    let want: Vec<ObjectId> = remote_objects.difference(local_objects).copied().collect();
     let have: Vec<ObjectId> = local_objects
         .intersection(remote_objects)
         .copied()

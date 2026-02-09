@@ -54,13 +54,19 @@ pub fn run(args: ShowArgs) -> anyhow::Result<()> {
                 println!("{}", output::kv("tree", &tree.to_string()));
             }
             if !rev.patches.is_empty() {
-                println!("{}", output::kv("patches", &format!("{} patch(es)", rev.patches.len())));
+                println!(
+                    "{}",
+                    output::kv("patches", &format!("{} patch(es)", rev.patches.len()))
+                );
                 for p in &rev.patches {
                     println!("                  {}", p);
                 }
             }
             println!("{}", output::kv("author", &rev.author));
-            println!("{}", output::kv("date", &format_timestamp(rev.created_at_ms)));
+            println!(
+                "{}",
+                output::kv("date", &format_timestamp(rev.created_at_ms))
+            );
             if let Some(ref cid) = rev.change_id {
                 println!("{}", output::kv("change_id", &cid.to_string()));
             }
@@ -104,7 +110,10 @@ pub fn run(args: ShowArgs) -> anyhow::Result<()> {
             if let Some(ref result) = patch.result_object {
                 println!("{}", output::kv("result", &result.to_string()));
             }
-            println!("{}", output::kv("ops", &format!("{} operation(s)", patch.ops.len())));
+            println!(
+                "{}",
+                output::kv("ops", &format!("{} operation(s)", patch.ops.len()))
+            );
             for op in &patch.ops {
                 println!("  {} @ {}", op.op_type, op.address);
             }
@@ -115,7 +124,10 @@ pub fn run(args: ShowArgs) -> anyhow::Result<()> {
             println!("{}", output::kv("status", &format!("{:?}", intent.status)));
             println!("{}", output::kv("goal", &intent.goal));
             if !intent.constraints.is_empty() {
-                println!("{}", output::kv("constraints", &intent.constraints.join(", ")));
+                println!(
+                    "{}",
+                    output::kv("constraints", &intent.constraints.join(", "))
+                );
             }
             if !intent.agents.is_empty() {
                 println!("{}", output::kv("agents", &intent.agents.join(", ")));
@@ -130,18 +142,33 @@ pub fn run(args: ShowArgs) -> anyhow::Result<()> {
             }
         }
         Object::Capsule(capsule) => {
-            println!("{}", output::kv("revision", &capsule.revision_id.to_string()));
-            println!("{}", output::kv("agent_id", &capsule.public_fields.agent_id));
+            println!(
+                "{}",
+                output::kv("revision", &capsule.revision_id.to_string())
+            );
+            println!(
+                "{}",
+                output::kv("agent_id", &capsule.public_fields.agent_id)
+            );
             if let Some(ref ver) = capsule.public_fields.agent_version {
                 println!("{}", output::kv("agent_version", ver));
             }
             if !capsule.public_fields.evidence.is_empty() {
-                println!("{}", output::kv("evidence", &format!("{} item(s)", capsule.public_fields.evidence.len())));
+                println!(
+                    "{}",
+                    output::kv(
+                        "evidence",
+                        &format!("{} item(s)", capsule.public_fields.evidence.len())
+                    )
+                );
                 for e in &capsule.public_fields.evidence {
                     println!("  {} ({})", e.name, e.status);
                 }
             }
-            println!("{}", output::kv("signatures", &format!("{}", capsule.signatures.len())));
+            println!(
+                "{}",
+                output::kv("signatures", &format!("{}", capsule.signatures.len()))
+            );
             if capsule.encrypted_private.is_some() {
                 println!("{}", output::kv("private", "encrypted"));
             }
@@ -149,35 +176,62 @@ pub fn run(args: ShowArgs) -> anyhow::Result<()> {
         Object::Snapshot(snap) => {
             println!("{}", output::kv("revision", &snap.revision_id.to_string()));
             println!("{}", output::kv("tree_root", &snap.tree_root.to_string()));
-            println!("{}", output::kv("date", &format_timestamp(snap.created_at_ms)));
+            println!(
+                "{}",
+                output::kv("date", &format_timestamp(snap.created_at_ms))
+            );
         }
         Object::Conflict(conflict) => {
             println!("{}", output::kv("file_path", &conflict.file_path));
             println!("{}", output::kv("codec", &conflict.codec_id));
-            println!("{}", output::kv("status", &format!("{:?}", conflict.status)));
-            println!("{}", output::kv("left", &conflict.left_revision.to_string()));
-            println!("{}", output::kv("right", &conflict.right_revision.to_string()));
+            println!(
+                "{}",
+                output::kv("status", &format!("{:?}", conflict.status))
+            );
+            println!(
+                "{}",
+                output::kv("left", &conflict.left_revision.to_string())
+            );
+            println!(
+                "{}",
+                output::kv("right", &conflict.right_revision.to_string())
+            );
         }
         Object::Policy(policy) => {
             println!("{}", output::kv("policy_id", &policy.policy_id));
-            println!("{}", output::kv("visibility", &format!("{:?}", policy.visibility)));
+            println!(
+                "{}",
+                output::kv("visibility", &format!("{:?}", policy.visibility))
+            );
             if !policy.required_checks.is_empty() {
-                println!("{}", output::kv("checks", &policy.required_checks.join(", ")));
+                println!(
+                    "{}",
+                    output::kv("checks", &policy.required_checks.join(", "))
+                );
             }
         }
         Object::Workstream(ws) => {
             println!("{}", output::kv("id", &ws.workstream_id));
-            println!("{}", output::kv("changes", &format!("{}", ws.change_stack.len())));
+            println!(
+                "{}",
+                output::kv("changes", &format!("{}", ws.change_stack.len()))
+            );
         }
         Object::RefLog(reflog) => {
             println!("{}", output::kv("ref", &reflog.ref_name));
-            println!("{}", output::kv("entries", &format!("{}", reflog.entries.len())));
+            println!(
+                "{}",
+                output::kv("entries", &format!("{}", reflog.entries.len()))
+            );
             for entry in &reflog.entries {
                 let old = entry
                     .old_target
                     .map(|id| id.to_string())
                     .unwrap_or_else(|| "(none)".to_string());
-                println!("  {} -> {} [{}] {}", old, entry.new_target, entry.author, entry.message);
+                println!(
+                    "  {} -> {} [{}] {}",
+                    old, entry.new_target, entry.author, entry.message
+                );
             }
         }
     }

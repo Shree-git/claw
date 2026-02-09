@@ -43,9 +43,7 @@ enum ChangeCommand {
 
 pub fn run(args: ChangeArgs) -> anyhow::Result<()> {
     match args.command {
-        ChangeCommand::New {
-            intent,
-        } => {
+        ChangeCommand::New { intent } => {
             let root = find_repo_root()?;
             let store = ClawStore::open(&root)?;
             let now = std::time::SystemTime::now()
@@ -89,18 +87,18 @@ pub fn run(args: ChangeArgs) -> anyhow::Result<()> {
             let store = ClawStore::open(&root)?;
             let refs = store.list_refs("changes")?;
             for (_, id) in &refs {
-                if let Ok(obj) = store.load_object(id) {
-                    if let Object::Change(change) = obj {
-                        if let Some(ref filter) = intent {
-                            if change.intent_id.to_string() != *filter {
-                                continue;
-                            }
-                        }
-                        println!(
-                            "{} {:?} intent:{}",
-                            change.id, change.status, change.intent_id
-                        );
+                if let Ok(Object::Change(change)) = store.load_object(id) {
+                    let matches_intent = intent
+                        .as_ref()
+                        .map(|filter| change.intent_id.to_string() == *filter)
+                        .unwrap_or(true);
+                    if !matches_intent {
+                        continue;
                     }
+                    println!(
+                        "{} {:?} intent:{}",
+                        change.id, change.status, change.intent_id
+                    );
                 }
             }
         }

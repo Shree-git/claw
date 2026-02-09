@@ -53,12 +53,25 @@ pub fn run(args: IntegrateArgs) -> anyhow::Result<()> {
         .get_ref(&args.right)?
         .ok_or_else(|| anyhow::anyhow!("ref not found: {}", args.right))?;
 
-    let result = merge(&store, &registry, &left_id, &right_id, &args.author, &args.message)?;
+    let result = merge(
+        &store,
+        &registry,
+        &left_id,
+        &right_id,
+        &args.author,
+        &args.message,
+    )?;
 
     if result.conflicts.is_empty() {
         // Clean merge: store revision, materialize tree, advance ref
         let rev_id = store.store_object(&Object::Revision(result.revision))?;
-        store.update_ref_cas(&left_ref, Some(&left_id), &rev_id, &args.author, &args.message)?;
+        store.update_ref_cas(
+            &left_ref,
+            Some(&left_id),
+            &rev_id,
+            &args.author,
+            &args.message,
+        )?;
 
         // Materialize merged tree
         if let Some(tree_id) = store.load_object(&rev_id)?.as_revision_tree() {
@@ -71,7 +84,8 @@ pub fn run(args: IntegrateArgs) -> anyhow::Result<()> {
         let mut conflict_entries = Vec::new();
 
         for conflict in &result.conflicts {
-            let base_content = load_file_from_revision(&store, &result.ancestor, &conflict.file_path);
+            let base_content =
+                load_file_from_revision(&store, &result.ancestor, &conflict.file_path);
             let left_content = load_file_from_revision(&store, &left_id, &conflict.file_path);
             let right_content = load_file_from_revision(&store, &right_id, &conflict.file_path);
 

@@ -58,9 +58,7 @@ fn capsule_to_proto(c: &Capsule) -> crate::proto::objects::Capsule {
     }
 }
 
-fn public_from_proto(
-    p: &crate::proto::objects::CapsulePublic,
-) -> CapsulePublic {
+fn public_from_proto(p: &crate::proto::objects::CapsulePublic) -> CapsulePublic {
     CapsulePublic {
         agent_id: p.agent_id.clone(),
         agent_version: if p.agent_version.is_empty() {
@@ -114,17 +112,17 @@ impl CapsuleService for CapsuleServer {
             .map_err(|_| Status::invalid_argument("invalid ObjectId"))?;
         let revision_id = ObjectId::from_bytes(arr);
 
-        let public_fields = req
-            .public_fields
-            .as_ref()
-            .map(public_from_proto)
-            .unwrap_or(CapsulePublic {
-                agent_id: String::new(),
-                agent_version: None,
-                toolchain_digest: None,
-                env_fingerprint: None,
-                evidence: vec![],
-            });
+        let public_fields =
+            req.public_fields
+                .as_ref()
+                .map(public_from_proto)
+                .unwrap_or(CapsulePublic {
+                    agent_id: String::new(),
+                    agent_version: None,
+                    toolchain_digest: None,
+                    env_fingerprint: None,
+                    evidence: vec![],
+                });
 
         let capsule = Capsule {
             revision_id,
@@ -144,10 +142,7 @@ impl CapsuleService for CapsuleServer {
             .store_object(&Object::Capsule(capsule.clone()))
             .map_err(|e| Status::internal(e.to_string()))?;
         store
-            .set_ref(
-                &format!("capsules/{}", revision_id.to_hex()),
-                &obj_id,
-            )
+            .set_ref(&format!("capsules/{}", revision_id.to_hex()), &obj_id)
             .map_err(|e| Status::internal(e.to_string()))?;
 
         Ok(Response::new(CreateCapsuleResponse {

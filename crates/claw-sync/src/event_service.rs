@@ -73,9 +73,7 @@ impl EventStreamService for EventServer {
                             "ref_created"
                         };
 
-                        if !event_types.is_empty()
-                            && !event_types.iter().any(|t| t == event_type)
-                        {
+                        if !event_types.is_empty() && !event_types.iter().any(|t| t == event_type) {
                             known_refs.insert(name.clone(), *id);
                             continue;
                         }
@@ -111,9 +109,7 @@ impl EventStreamService for EventServer {
                     .collect();
 
                 for name in removed {
-                    if !event_types.is_empty()
-                        && !event_types.iter().any(|t| t == "ref_deleted")
-                    {
+                    if !event_types.is_empty() && !event_types.iter().any(|t| t == "ref_deleted") {
                         known_refs.remove(&name);
                         continue;
                     }
@@ -138,6 +134,8 @@ impl EventStreamService for EventServer {
             }
         });
 
-        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
+            rx,
+        )))
     }
 }

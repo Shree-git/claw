@@ -37,7 +37,10 @@ pub fn run(args: GitExportArgs) -> anyhow::Result<()> {
     // Write git branch ref
     let refs_dir = git_dir.join("refs").join("heads");
     std::fs::create_dir_all(&refs_dir)?;
-    std::fs::write(refs_dir.join(&args.branch), format!("{}\n", hex::encode(head_sha1)))?;
+    std::fs::write(
+        refs_dir.join(&args.branch),
+        format!("{}\n", hex::encode(head_sha1)),
+    )?;
 
     // Walk DAG and write change mapping refs
     write_change_refs(&store, &exporter, &rev_id, &git_dir)?;
@@ -64,18 +67,15 @@ fn write_change_refs(
         if !visited.insert(id) {
             continue;
         }
-        if let Ok(obj) = store.load_object(&id) {
-            if let Object::Revision(ref rev) = obj {
-                if let Some(ref change_id) = rev.change_id {
-                    if let Some(sha1) = exporter.get_sha1(&id) {
-                        std::fs::write(
-                            refs_dir.join(change_id.to_string()),
-                            format!("{}\n", hex::encode(sha1)),
-                        )?;
-                    }
-                }
-                queue.extend_from_slice(&rev.parents);
+        if let Ok(Object::Revision(ref rev)) = store.load_object(&id) {
+            if let (Some(change_id), Some(sha1)) = (rev.change_id.as_ref(), exporter.get_sha1(&id))
+            {
+                std::fs::write(
+                    refs_dir.join(change_id.to_string()),
+                    format!("{}\n", hex::encode(sha1)),
+                )?;
             }
+            queue.extend_from_slice(&rev.parents);
         }
     }
 

@@ -43,10 +43,7 @@ enum IntentCommand {
 
 pub fn run(args: IntentArgs) -> anyhow::Result<()> {
     match args.command {
-        IntentCommand::New {
-            title,
-            goal,
-        } => {
+        IntentCommand::New { title, goal } => {
             let root = find_repo_root()?;
             let store = ClawStore::open(&root)?;
             let now = std::time::SystemTime::now()
@@ -99,13 +96,8 @@ pub fn run(args: IntentArgs) -> anyhow::Result<()> {
                 println!("No intents found.");
             } else {
                 for (_name, id) in &refs {
-                    if let Ok(obj) = store.load_object(id) {
-                        if let Object::Intent(intent) = obj {
-                            println!(
-                                "{} {:?} {}",
-                                intent.id, intent.status, intent.title
-                            );
-                        }
+                    if let Ok(Object::Intent(intent)) = store.load_object(id) {
+                        println!("{} {:?} {}", intent.id, intent.status, intent.title);
                     }
                 }
             }

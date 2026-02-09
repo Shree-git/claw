@@ -83,11 +83,17 @@ pub fn run(args: DiffArgs) -> anyhow::Result<()> {
                 // JSON diff — fall back to unified text if parsing fails (e.g. added/deleted files)
                 match codec.diff(&old_bytes, &new_bytes) {
                     Ok(ops) => print!("{}", diff_render::render_json_diff(&change.path, &ops)),
-                    Err(_) => print!("{}", diff_render::render_unified_diff(&change.path, &old_bytes, &new_bytes)),
+                    Err(_) => print!(
+                        "{}",
+                        diff_render::render_unified_diff(&change.path, &old_bytes, &new_bytes)
+                    ),
                 }
             } else {
                 // Text diff
-                print!("{}", diff_render::render_unified_diff(&change.path, &old_bytes, &new_bytes));
+                print!(
+                    "{}",
+                    diff_render::render_unified_diff(&change.path, &old_bytes, &new_bytes)
+                );
             }
         } else {
             // Binary or unknown
@@ -109,7 +115,11 @@ pub fn run(args: DiffArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn resolve_tree(store: &ClawStore, ref_name: Option<&str>, default_head: bool) -> anyhow::Result<Option<ObjectId>> {
+fn resolve_tree(
+    store: &ClawStore,
+    ref_name: Option<&str>,
+    default_head: bool,
+) -> anyhow::Result<Option<ObjectId>> {
     let ref_name = match ref_name {
         Some(r) => r,
         None if default_head => {

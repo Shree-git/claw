@@ -53,10 +53,7 @@ pub fn build_capsule(
     })
 }
 
-pub fn verify_capsule(
-    capsule: &Capsule,
-    public_key: &[u8; 32],
-) -> Result<bool, CryptoError> {
+pub fn verify_capsule(capsule: &Capsule, public_key: &[u8; 32]) -> Result<bool, CryptoError> {
     let sig = capsule
         .signatures
         .first()
@@ -122,7 +119,14 @@ mod tests {
         let enc_key = [99u8; 32];
 
         let private_data = b"secret private data";
-        let capsule = build_capsule(&rev_id, test_public(), Some(private_data), Some(&enc_key), &kp).unwrap();
+        let capsule = build_capsule(
+            &rev_id,
+            test_public(),
+            Some(private_data),
+            Some(&enc_key),
+            &kp,
+        )
+        .unwrap();
 
         assert!(capsule.encrypted_private.is_some());
         assert_eq!(capsule.encryption, "xchacha20poly1305");
@@ -130,7 +134,8 @@ mod tests {
         assert!(verify_capsule(&capsule, &pk).unwrap());
 
         // Can decrypt
-        let decrypted = encrypt::decrypt(&enc_key, capsule.encrypted_private.as_ref().unwrap()).unwrap();
+        let decrypted =
+            encrypt::decrypt(&enc_key, capsule.encrypted_private.as_ref().unwrap()).unwrap();
         assert_eq!(decrypted, private_data);
 
         // Wrong key can't decrypt

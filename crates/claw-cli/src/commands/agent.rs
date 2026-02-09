@@ -94,7 +94,11 @@ pub fn run(args: AgentArgs) -> anyhow::Result<()> {
                 for (name, id) in &refs {
                     if let Ok(Object::Blob(b)) = store.load_object(id) {
                         if let Ok(agent) = serde_json::from_slice::<CapsulePublic>(&b.data) {
-                            println!("{} v{}", agent.agent_id, agent.agent_version.as_deref().unwrap_or("?"));
+                            println!(
+                                "{} v{}",
+                                agent.agent_id,
+                                agent.agent_version.as_deref().unwrap_or("?")
+                            );
                         } else {
                             println!("{name}");
                         }

@@ -14,7 +14,11 @@ mod worktree;
 use commands::Commands;
 
 #[derive(Parser)]
-#[command(name = "claw", version, about = "Intent-native, agent-native version control")]
+#[command(
+    name = "claw",
+    version,
+    about = "Intent-native, agent-native version control"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

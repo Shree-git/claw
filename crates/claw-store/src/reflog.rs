@@ -48,10 +48,7 @@ pub fn append_reflog(
     Ok(())
 }
 
-pub fn read_reflog(
-    layout: &RepoLayout,
-    ref_name: &str,
-) -> Result<Vec<RefLogLine>, StoreError> {
+pub fn read_reflog(layout: &RepoLayout, ref_name: &str) -> Result<Vec<RefLogLine>, StoreError> {
     let path = layout.reflogs_dir().join(ref_name);
     if !path.exists() {
         return Ok(Vec::new());

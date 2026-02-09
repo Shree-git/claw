@@ -52,6 +52,7 @@ fn convert_filter(filter: &crate::proto::sync::PartialCloneFilter) -> PartialClo
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn decode_object_id(msg: &crate::proto::common::ObjectId) -> Result<ObjectId, Status> {
     let id_bytes: [u8; 32] = msg
         .hash
@@ -63,7 +64,10 @@ fn decode_object_id(msg: &crate::proto::common::ObjectId) -> Result<ObjectId, St
 
 #[tonic::async_trait]
 impl SyncService for SyncServer {
-    async fn hello(&self, request: Request<HelloRequest>) -> Result<Response<HelloResponse>, Status> {
+    async fn hello(
+        &self,
+        request: Request<HelloRequest>,
+    ) -> Result<Response<HelloResponse>, Status> {
         let _req = request.into_inner();
         Ok(Response::new(HelloResponse {
             server_version: "0.1.0".to_string(),
@@ -94,8 +98,7 @@ impl SyncService for SyncServer {
         Ok(Response::new(AdvertiseRefsResponse { refs: entries }))
     }
 
-    type FetchObjectsStream =
-        tokio_stream::wrappers::ReceiverStream<Result<ObjectChunk, Status>>;
+    type FetchObjectsStream = tokio_stream::wrappers::ReceiverStream<Result<ObjectChunk, Status>>;
 
     async fn fetch_objects(
         &self,
@@ -174,7 +177,9 @@ impl SyncService for SyncServer {
                 .await;
         });
 
-        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
+            rx,
+        )))
     }
 
     async fn push_objects(
@@ -228,7 +233,7 @@ impl SyncService for SyncServer {
             let expected_old = update
                 .old_target
                 .as_ref()
-                .map(|msg| decode_object_id(msg))
+                .map(decode_object_id)
                 .transpose()?;
 
             match (&expected_old, &current) {

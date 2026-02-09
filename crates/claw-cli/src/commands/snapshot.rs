@@ -50,9 +50,10 @@ pub fn run(args: SnapshotArgs) -> anyhow::Result<()> {
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis() as u64;
 
-    let change_id = args.change.as_ref().and_then(|s| {
-        claw_core::id::ChangeId::from_string(s).ok()
-    });
+    let change_id = args
+        .change
+        .as_ref()
+        .and_then(|s| claw_core::id::ChangeId::from_string(s).ok());
 
     if is_merge_completion {
         // Merge completion: create two-parent revision
@@ -73,7 +74,13 @@ pub fn run(args: SnapshotArgs) -> anyhow::Result<()> {
             policy_evidence: vec![],
         };
         let rev_id = store.store_object(&Object::Revision(revision))?;
-        store.update_ref_cas(&branch_ref, old_tip.as_ref(), &rev_id, &args.author, &args.message)?;
+        store.update_ref_cas(
+            &branch_ref,
+            old_tip.as_ref(),
+            &rev_id,
+            &args.author,
+            &args.message,
+        )?;
 
         // Clean up merge state and sidecars
         merge_state::remove(&claw_dir)?;
@@ -108,16 +115,14 @@ pub fn run(args: SnapshotArgs) -> anyhow::Result<()> {
         }
 
         for change in &changes {
-            let ext = change
-                .path
-                .rsplit('.')
-                .next()
-                .unwrap_or("");
+            let ext = change.path.rsplit('.').next().unwrap_or("");
             let codec = registry.get_by_extension(ext);
 
             if let Some(codec) = codec {
                 let old_content = match (change.kind.clone(), change.old_id) {
-                    (ChangeKind::Modified, Some(id)) | (ChangeKind::TypeChanged, Some(id)) | (ChangeKind::Deleted, Some(id)) => {
+                    (ChangeKind::Modified, Some(id))
+                    | (ChangeKind::TypeChanged, Some(id))
+                    | (ChangeKind::Deleted, Some(id)) => {
                         let obj = store.load_object(&id)?;
                         match obj {
                             Object::Blob(b) => b.data,
@@ -127,7 +132,9 @@ pub fn run(args: SnapshotArgs) -> anyhow::Result<()> {
                     _ => vec![],
                 };
                 let new_content = match (change.kind.clone(), change.new_id) {
-                    (ChangeKind::Added, Some(id)) | (ChangeKind::Modified, Some(id)) | (ChangeKind::TypeChanged, Some(id)) => {
+                    (ChangeKind::Added, Some(id))
+                    | (ChangeKind::Modified, Some(id))
+                    | (ChangeKind::TypeChanged, Some(id)) => {
                         let obj = store.load_object(&id)?;
                         match obj {
                             Object::Blob(b) => b.data,
@@ -170,7 +177,13 @@ pub fn run(args: SnapshotArgs) -> anyhow::Result<()> {
     };
 
     let rev_id = store.store_object(&Object::Revision(revision))?;
-    store.update_ref_cas(&branch_ref, old_tip.as_ref(), &rev_id, &args.author, &args.message)?;
+    store.update_ref_cas(
+        &branch_ref,
+        old_tip.as_ref(),
+        &rev_id,
+        &args.author,
+        &args.message,
+    )?;
 
     println!("Snapshot: {rev_id}");
     Ok(())

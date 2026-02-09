@@ -124,7 +124,14 @@ impl ClawStore {
         author: &str,
         message: &str,
     ) -> Result<(), StoreError> {
-        refs::update_ref_cas(&self.layout, name, expected_old, new_target, author, message)
+        refs::update_ref_cas(
+            &self.layout,
+            name,
+            expected_old,
+            new_target,
+            author,
+            message,
+        )
     }
 
     pub fn list_object_ids(&self) -> Result<Vec<ObjectId>, StoreError> {

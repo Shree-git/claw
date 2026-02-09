@@ -90,34 +90,36 @@ pub fn deserialize_object(type_tag: TypeTag, data: &[u8]) -> Result<Object, Core
     match type_tag {
         TypeTag::Blob => Ok(Object::Blob(blob_from_proto(&decode::<po::Blob>(data)?)?)),
         TypeTag::Tree => Ok(Object::Tree(tree_from_proto(&decode::<po::Tree>(data)?)?)),
-        TypeTag::Patch => Ok(Object::Patch(patch_from_proto(&decode::<po::Patch>(data)?)?)),
-        TypeTag::Revision => Ok(Object::Revision(revision_from_proto(
-            &decode::<po::Revision>(data)?,
-        )?)),
-        TypeTag::Snapshot => Ok(Object::Snapshot(snapshot_from_proto(
-            &decode::<po::Snapshot>(data)?,
-        )?)),
-        TypeTag::Intent => Ok(Object::Intent(intent_from_proto(
-            &decode::<po::Intent>(data)?,
-        )?)),
-        TypeTag::Change => Ok(Object::Change(change_from_proto(
-            &decode::<po::Change>(data)?,
-        )?)),
-        TypeTag::Conflict => Ok(Object::Conflict(conflict_from_proto(
-            &decode::<po::Conflict>(data)?,
-        )?)),
+        TypeTag::Patch => Ok(Object::Patch(patch_from_proto(&decode::<po::Patch>(
+            data,
+        )?)?)),
+        TypeTag::Revision => Ok(Object::Revision(revision_from_proto(&decode::<
+            po::Revision,
+        >(data)?)?)),
+        TypeTag::Snapshot => Ok(Object::Snapshot(snapshot_from_proto(&decode::<
+            po::Snapshot,
+        >(data)?)?)),
+        TypeTag::Intent => Ok(Object::Intent(intent_from_proto(&decode::<po::Intent>(
+            data,
+        )?)?)),
+        TypeTag::Change => Ok(Object::Change(change_from_proto(&decode::<po::Change>(
+            data,
+        )?)?)),
+        TypeTag::Conflict => Ok(Object::Conflict(conflict_from_proto(&decode::<
+            po::Conflict,
+        >(data)?)?)),
         TypeTag::Capsule => Ok(Object::Capsule(capsule_from_proto(
             &decode::<po::Capsule>(data)?,
         )?)),
-        TypeTag::Policy => Ok(Object::Policy(policy_from_proto(
-            &decode::<po::Policy>(data)?,
-        )?)),
-        TypeTag::Workstream => Ok(Object::Workstream(workstream_from_proto(
-            &decode::<po::Workstream>(data)?,
-        )?)),
-        TypeTag::RefLog => Ok(Object::RefLog(reflog_from_proto(
-            &decode::<po::RefLog>(data)?,
-        )?)),
+        TypeTag::Policy => Ok(Object::Policy(policy_from_proto(&decode::<po::Policy>(
+            data,
+        )?)?)),
+        TypeTag::Workstream => Ok(Object::Workstream(workstream_from_proto(&decode::<
+            po::Workstream,
+        >(data)?)?)),
+        TypeTag::RefLog => Ok(Object::RefLog(reflog_from_proto(&decode::<po::RefLog>(
+            data,
+        )?)?)),
     }
 }
 
@@ -263,7 +265,9 @@ fn patch_from_proto(p: &po::Patch) -> Result<Patch, CoreError> {
 
 fn revision_to_proto(r: &Revision) -> po::Revision {
     po::Revision {
-        change_id: r.change_id.map(|c| ulid_to_proto(&IntentId::from_bytes(c.as_bytes()))),
+        change_id: r
+            .change_id
+            .map(|c| ulid_to_proto(&IntentId::from_bytes(c.as_bytes()))),
         parents: r.parents.iter().map(oid_to_proto).collect(),
         patches: r.patches.iter().map(oid_to_proto).collect(),
         snapshot_base: opt_oid_to_proto(&r.snapshot_base),

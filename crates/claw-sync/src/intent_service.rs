@@ -55,6 +55,7 @@ fn intent_to_proto(i: &Intent) -> crate::proto::objects::Intent {
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn parse_status(s: &str) -> Result<IntentStatus, Status> {
     match s {
         "open" => Ok(IntentStatus::Open),

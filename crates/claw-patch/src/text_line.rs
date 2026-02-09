@@ -23,10 +23,10 @@ impl Codec for TextLineCodec {
     }
 
     fn diff(&self, old: &[u8], new: &[u8]) -> Result<Vec<PatchOp>, PatchError> {
-        let old_str = std::str::from_utf8(old)
-            .map_err(|e| PatchError::ApplyFailed(e.to_string()))?;
-        let new_str = std::str::from_utf8(new)
-            .map_err(|e| PatchError::ApplyFailed(e.to_string()))?;
+        let old_str =
+            std::str::from_utf8(old).map_err(|e| PatchError::ApplyFailed(e.to_string()))?;
+        let new_str =
+            std::str::from_utf8(new).map_err(|e| PatchError::ApplyFailed(e.to_string()))?;
 
         let diff = TextDiff::from_lines(old_str, new_str);
         let old_lines: Vec<&str> = old_str.lines().collect();
@@ -61,7 +61,10 @@ impl Codec for TextLineCodec {
                         old_data: None,
                         new_data: Some(inserted.as_bytes().to_vec()),
                         context_hash: if !old_lines.is_empty() {
-                            Some(context_hash(&old_lines, old_line.min(old_lines.len().saturating_sub(1))))
+                            Some(context_hash(
+                                &old_lines,
+                                old_line.min(old_lines.len().saturating_sub(1)),
+                            ))
                         } else {
                             None
                         },
@@ -88,8 +91,8 @@ impl Codec for TextLineCodec {
     }
 
     fn apply(&self, base: &[u8], ops: &[PatchOp]) -> Result<Vec<u8>, PatchError> {
-        let base_str = std::str::from_utf8(base)
-            .map_err(|e| PatchError::ApplyFailed(e.to_string()))?;
+        let base_str =
+            std::str::from_utf8(base).map_err(|e| PatchError::ApplyFailed(e.to_string()))?;
         let mut lines: Vec<String> = base_str.lines().map(|l| l.to_string()).collect();
         // Track whether original had trailing newline
         let trailing_newline = base_str.ends_with('\n');
@@ -102,22 +105,27 @@ impl Codec for TextLineCodec {
 
             match op.op_type.as_str() {
                 "delete" => {
-                    let old_data = op.old_data.as_ref()
-                        .ok_or_else(|| PatchError::ApplyFailed("delete op missing old_data".into()))?;
+                    let old_data = op.old_data.as_ref().ok_or_else(|| {
+                        PatchError::ApplyFailed("delete op missing old_data".into())
+                    })?;
                     let old_str = std::str::from_utf8(old_data)
                         .map_err(|e| PatchError::ApplyFailed(e.to_string()))?;
                     let count = old_str.lines().count().max(1);
                     if adjusted + count > lines.len() {
-                        return Err(PatchError::ApplyFailed(
-                            format!("delete out of bounds: {} + {} > {}", adjusted, count, lines.len()),
-                        ));
+                        return Err(PatchError::ApplyFailed(format!(
+                            "delete out of bounds: {} + {} > {}",
+                            adjusted,
+                            count,
+                            lines.len()
+                        )));
                     }
                     lines.drain(adjusted..adjusted + count);
                     offset -= count as i64;
                 }
                 "insert" => {
-                    let new_data = op.new_data.as_ref()
-                        .ok_or_else(|| PatchError::ApplyFailed("insert op missing new_data".into()))?;
+                    let new_data = op.new_data.as_ref().ok_or_else(|| {
+                        PatchError::ApplyFailed("insert op missing new_data".into())
+                    })?;
                     let new_str = std::str::from_utf8(new_data)
                         .map_err(|e| PatchError::ApplyFailed(e.to_string()))?;
                     let new_lines: Vec<String> = new_str.lines().map(|l| l.to_string()).collect();
@@ -129,20 +137,25 @@ impl Codec for TextLineCodec {
                     offset += count as i64;
                 }
                 "replace" => {
-                    let old_data = op.old_data.as_ref()
-                        .ok_or_else(|| PatchError::ApplyFailed("replace op missing old_data".into()))?;
+                    let old_data = op.old_data.as_ref().ok_or_else(|| {
+                        PatchError::ApplyFailed("replace op missing old_data".into())
+                    })?;
                     let old_str = std::str::from_utf8(old_data)
                         .map_err(|e| PatchError::ApplyFailed(e.to_string()))?;
                     let del_count = old_str.lines().count().max(1);
                     if adjusted + del_count > lines.len() {
-                        return Err(PatchError::ApplyFailed(
-                            format!("replace delete out of bounds: {} + {} > {}", adjusted, del_count, lines.len()),
-                        ));
+                        return Err(PatchError::ApplyFailed(format!(
+                            "replace delete out of bounds: {} + {} > {}",
+                            adjusted,
+                            del_count,
+                            lines.len()
+                        )));
                     }
                     lines.drain(adjusted..adjusted + del_count);
 
-                    let new_data = op.new_data.as_ref()
-                        .ok_or_else(|| PatchError::ApplyFailed("replace op missing new_data".into()))?;
+                    let new_data = op.new_data.as_ref().ok_or_else(|| {
+                        PatchError::ApplyFailed("replace op missing new_data".into())
+                    })?;
                     let new_str = std::str::from_utf8(new_data)
                         .map_err(|e| PatchError::ApplyFailed(e.to_string()))?;
                     let new_lines: Vec<String> = new_str.lines().map(|l| l.to_string()).collect();
@@ -160,10 +173,8 @@ impl Codec for TextLineCodec {
         }
 
         let mut result = lines.join("\n");
-        if trailing_newline || base_str.is_empty() {
-            if !result.is_empty() {
-                result.push('\n');
-            }
+        if (trailing_newline || base_str.is_empty()) && !result.is_empty() {
+            result.push('\n');
         }
         Ok(result.into_bytes())
     }
@@ -200,7 +211,11 @@ impl Codec for TextLineCodec {
         Ok(inverted)
     }
 
-    fn commute(&self, left: &[PatchOp], right: &[PatchOp]) -> Result<(Vec<PatchOp>, Vec<PatchOp>), PatchError> {
+    fn commute(
+        &self,
+        left: &[PatchOp],
+        right: &[PatchOp],
+    ) -> Result<(Vec<PatchOp>, Vec<PatchOp>), PatchError> {
         // Darcs-style commutation: non-overlapping line ranges commute with offset adjustment
         let mut new_right = Vec::new();
         let mut new_left = Vec::new();
@@ -282,12 +297,12 @@ impl Codec for TextLineCodec {
     }
 
     fn merge3(&self, base: &[u8], left: &[u8], right: &[u8]) -> Result<Vec<u8>, PatchError> {
-        let base_str = std::str::from_utf8(base)
-            .map_err(|e| PatchError::Merge3Failed(e.to_string()))?;
-        let left_str = std::str::from_utf8(left)
-            .map_err(|e| PatchError::Merge3Failed(e.to_string()))?;
-        let right_str = std::str::from_utf8(right)
-            .map_err(|e| PatchError::Merge3Failed(e.to_string()))?;
+        let base_str =
+            std::str::from_utf8(base).map_err(|e| PatchError::Merge3Failed(e.to_string()))?;
+        let left_str =
+            std::str::from_utf8(left).map_err(|e| PatchError::Merge3Failed(e.to_string()))?;
+        let right_str =
+            std::str::from_utf8(right).map_err(|e| PatchError::Merge3Failed(e.to_string()))?;
 
         let base_lines: Vec<&str> = base_str.lines().collect();
 
@@ -295,8 +310,10 @@ impl Codec for TextLineCodec {
         let right_diff = TextDiff::from_lines(base_str, right_str);
 
         // Build change maps: which base lines were modified
-        let mut left_changes: std::collections::HashMap<usize, Vec<&str>> = std::collections::HashMap::new();
-        let mut right_changes: std::collections::HashMap<usize, Vec<&str>> = std::collections::HashMap::new();
+        let mut left_changes: std::collections::HashMap<usize, Vec<&str>> =
+            std::collections::HashMap::new();
+        let mut right_changes: std::collections::HashMap<usize, Vec<&str>> =
+            std::collections::HashMap::new();
 
         collect_changes(&left_diff, &mut left_changes);
         collect_changes(&right_diff, &mut right_changes);
@@ -333,9 +350,9 @@ impl Codec for TextLineCodec {
                             result.extend(replacement.iter().map(|s| s.to_string()));
                         }
                     } else {
-                        return Err(PatchError::Merge3Failed(
-                            format!("conflict at line {i}: both sides changed differently"),
-                        ));
+                        return Err(PatchError::Merge3Failed(format!(
+                            "conflict at line {i}: both sides changed differently"
+                        )));
                     }
                     i += 1;
                 }

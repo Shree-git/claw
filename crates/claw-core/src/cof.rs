@@ -68,7 +68,9 @@ fn decode_uvarint(data: &[u8], pos: &mut usize) -> Result<u64, CoreError> {
     let mut shift = 0u32;
     loop {
         if *pos >= data.len() {
-            return Err(CoreError::Deserialization("unexpected end of uvarint".into()));
+            return Err(CoreError::Deserialization(
+                "unexpected end of uvarint".into(),
+            ));
         }
         let byte = data[*pos];
         *pos += 1;
@@ -95,8 +97,9 @@ pub fn cof_encode(type_tag: TypeTag, payload: &[u8]) -> Result<Vec<u8>, CoreErro
 
     let compressed = match compression {
         Compression::None => payload.to_vec(),
-        Compression::Zstd => zstd::encode_all(payload, 3)
-            .map_err(|e| CoreError::Compression(e.to_string()))?,
+        Compression::Zstd => {
+            zstd::encode_all(payload, 3).map_err(|e| CoreError::Compression(e.to_string()))?
+        }
     };
 
     let flags = CofFlags::new(
@@ -144,8 +147,7 @@ pub fn cof_decode(data: &[u8]) -> Result<(TypeTag, Vec<u8>), CoreError> {
     }
 
     // Type tag
-    let type_tag = TypeTag::from_u8(data[5])
-        .ok_or(CoreError::UnknownTypeTag(data[5]))?;
+    let type_tag = TypeTag::from_u8(data[5]).ok_or(CoreError::UnknownTypeTag(data[5]))?;
 
     // Flags (data[6]) - reserved for future use
     let _flags = data[6];
@@ -160,7 +162,9 @@ pub fn cof_decode(data: &[u8]) -> Result<(TypeTag, Vec<u8>), CoreError> {
 
     // CRC32 check: last 4 bytes
     if data.len() < pos + 4 {
-        return Err(CoreError::Deserialization("data too short for CRC32".into()));
+        return Err(CoreError::Deserialization(
+            "data too short for CRC32".into(),
+        ));
     }
     let crc_offset = data.len() - 4;
     let expected_crc = u32::from_le_bytes([

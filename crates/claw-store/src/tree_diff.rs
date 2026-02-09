@@ -85,7 +85,9 @@ pub fn diff_trees(
                 }
             }
             (Some((old_id, old_mode)), Some((new_id, new_mode))) => {
-                if old_mode != new_mode && (*old_mode == FileMode::Directory || *new_mode == FileMode::Directory) {
+                if old_mode != new_mode
+                    && (*old_mode == FileMode::Directory || *new_mode == FileMode::Directory)
+                {
                     // Type changed between file and directory
                     if *old_mode == FileMode::Directory {
                         let sub_changes = diff_trees(store, Some(old_id), None, &full_path)?;
@@ -115,7 +117,8 @@ pub fn diff_trees(
                     }
                 } else if *old_mode == FileMode::Directory && *new_mode == FileMode::Directory {
                     if old_id != new_id {
-                        let sub_changes = diff_trees(store, Some(old_id), Some(new_id), &full_path)?;
+                        let sub_changes =
+                            diff_trees(store, Some(old_id), Some(new_id), &full_path)?;
                         changes.extend(sub_changes);
                     }
                 } else if old_id != new_id {

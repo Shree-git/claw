@@ -39,12 +39,10 @@ pub fn find_lca(
             if right_ancestors.contains(&id) {
                 return Ok(Some(id));
             }
-            if let Ok(obj) = store.load_object(&id) {
-                if let Object::Revision(rev) = obj {
-                    for parent in &rev.parents {
-                        if left_ancestors.insert(*parent) {
-                            left_queue.push_back(*parent);
-                        }
+            if let Ok(Object::Revision(rev)) = store.load_object(&id) {
+                for parent in &rev.parents {
+                    if left_ancestors.insert(*parent) {
+                        left_queue.push_back(*parent);
                     }
                 }
             }
@@ -55,12 +53,10 @@ pub fn find_lca(
             if left_ancestors.contains(&id) {
                 return Ok(Some(id));
             }
-            if let Ok(obj) = store.load_object(&id) {
-                if let Object::Revision(rev) = obj {
-                    for parent in &rev.parents {
-                        if right_ancestors.insert(*parent) {
-                            right_queue.push_back(*parent);
-                        }
+            if let Ok(Object::Revision(rev)) = store.load_object(&id) {
+                for parent in &rev.parents {
+                    if right_ancestors.insert(*parent) {
+                        right_queue.push_back(*parent);
                     }
                 }
             }

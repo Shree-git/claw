@@ -11,7 +11,11 @@ pub trait Codec: Send + Sync {
 
     fn invert(&self, ops: &[PatchOp]) -> Result<Vec<PatchOp>, PatchError>;
 
-    fn commute(&self, left: &[PatchOp], right: &[PatchOp]) -> Result<(Vec<PatchOp>, Vec<PatchOp>), PatchError>;
+    fn commute(
+        &self,
+        left: &[PatchOp],
+        right: &[PatchOp],
+    ) -> Result<(Vec<PatchOp>, Vec<PatchOp>), PatchError>;
 
     fn merge3(&self, base: &[u8], left: &[u8], right: &[u8]) -> Result<Vec<u8>, PatchError>;
 }

@@ -20,15 +20,15 @@ impl Default for RepoConfig {
 
 pub fn write_default_config(layout: &RepoLayout) -> Result<(), StoreError> {
     let config = RepoConfig::default();
-    let toml_str = toml::to_string_pretty(&config)
-        .map_err(|e| StoreError::Config(e.to_string()))?;
+    let toml_str =
+        toml::to_string_pretty(&config).map_err(|e| StoreError::Config(e.to_string()))?;
     std::fs::write(layout.config_file(), toml_str)?;
     Ok(())
 }
 
 pub fn read_config(layout: &RepoLayout) -> Result<RepoConfig, StoreError> {
     let content = std::fs::read_to_string(layout.config_file())?;
-    let config: RepoConfig = toml::from_str(&content)
-        .map_err(|e| StoreError::Config(e.to_string()))?;
+    let config: RepoConfig =
+        toml::from_str(&content).map_err(|e| StoreError::Config(e.to_string()))?;
     Ok(config)
 }

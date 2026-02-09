@@ -127,5 +127,10 @@ pub fn resolve_remote_url(root: &Path, remote_arg: &str) -> anyhow::Result<Strin
         .remotes
         .get(remote_arg)
         .map(|e| e.url.clone())
-        .ok_or_else(|| anyhow::anyhow!("remote '{}' not found. Use a URL or `claw remote add`.", remote_arg))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "remote '{}' not found. Use a URL or `claw remote add`.",
+                remote_arg
+            )
+        })
 }

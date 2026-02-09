@@ -57,7 +57,10 @@ impl CodecRegistry {
         let mut reg = Self::new();
         reg.register(
             Arc::new(TextLineCodec),
-            &["txt", "md", "rs", "py", "js", "ts", "c", "h", "cpp", "go", "rb", "sh", "toml", "yaml", "yml"],
+            &[
+                "txt", "md", "rs", "py", "js", "ts", "c", "h", "cpp", "go", "rb", "sh", "toml",
+                "yaml", "yml",
+            ],
         );
         reg.register(Arc::new(JsonTreeCodec), &["json"]);
         reg.set_fallback(Arc::new(BinaryCodec));

@@ -19,21 +19,12 @@ pub fn render_unified_diff(path: &str, old_bytes: &[u8], new_bytes: &[u8]) -> St
 pub fn render_json_diff(path: &str, ops: &[claw_core::types::PatchOp]) -> String {
     let mut output = format!("--- a/{}\n+++ b/{}\n", path, path);
     for op in ops {
-        output.push_str(&format!(
-            "  {} @{}: ",
-            op.op_type, op.address
-        ));
+        output.push_str(&format!("  {} @{}: ", op.op_type, op.address));
         if let Some(old) = &op.old_data {
-            output.push_str(&format!(
-                "old={:?} ",
-                String::from_utf8_lossy(old)
-            ));
+            output.push_str(&format!("old={:?} ", String::from_utf8_lossy(old)));
         }
         if let Some(new) = &op.new_data {
-            output.push_str(&format!(
-                "new={:?}",
-                String::from_utf8_lossy(new)
-            ));
+            output.push_str(&format!("new={:?}", String::from_utf8_lossy(new)));
         }
         output.push('\n');
     }

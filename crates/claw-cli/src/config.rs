@@ -12,4 +12,3 @@ pub fn find_repo_root() -> anyhow::Result<PathBuf> {
         }
     }
 }
-

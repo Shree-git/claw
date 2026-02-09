@@ -27,8 +27,7 @@ pub fn merge(
     message: &str,
 ) -> Result<MergeResult, MergeError> {
     // 1. Find common ancestor
-    let ancestor = find_lca(store, left_head, right_head)?
-        .ok_or(MergeError::NoCommonAncestor)?;
+    let ancestor = find_lca(store, left_head, right_head)?.ok_or(MergeError::NoCommonAncestor)?;
 
     // 2. Collect patches from ancestor to each head
     let left_patches = collect_patches(store, &ancestor, left_head)?;
@@ -88,7 +87,8 @@ pub fn merge(
                     }
                     Err(_) => {
                         // Commute failed -- try merge3 fallback
-                        match try_merge3_fallback(store, registry, &ancestor, codec_id, path, l, r) {
+                        match try_merge3_fallback(store, registry, &ancestor, codec_id, path, l, r)
+                        {
                             Ok(merge3_patch_id) => {
                                 merged_patches.push(merge3_patch_id);
                             }
@@ -192,8 +192,7 @@ fn try_merge3_fallback(
     let codec = registry.get(codec_id)?;
 
     // Find base content from ancestor's tree
-    let base_content = find_blob_content_at_path(store, ancestor, path)?
-        .unwrap_or_default();
+    let base_content = find_blob_content_at_path(store, ancestor, path)?.unwrap_or_default();
 
     // Apply left patches to get left content
     let mut left_content = base_content.clone();
@@ -270,10 +269,8 @@ fn find_in_tree(
         if entry.name == target_name {
             if path_parts.len() == 1 {
                 // This is the final component - should be a blob
-                if let Ok(blob_obj) = store.load_object(&entry.object_id) {
-                    if let Object::Blob(b) = blob_obj {
-                        return Ok(Some(b.data));
-                    }
+                if let Ok(Object::Blob(b)) = store.load_object(&entry.object_id) {
+                    return Ok(Some(b.data));
                 }
                 return Ok(None);
             } else {

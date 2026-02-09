@@ -46,10 +46,7 @@ fn run_list() -> anyhow::Result<()> {
     }
 
     let ms = merge_state::read_from(&claw_dir)?;
-    println!(
-        "Merging: {} into {}",
-        ms.merge.right_ref, ms.merge.left_ref
-    );
+    println!("Merging: {} into {}", ms.merge.right_ref, ms.merge.left_ref);
     println!();
 
     if ms.conflicts.is_empty() {
@@ -152,7 +149,10 @@ fn run_abort() -> anyhow::Result<()> {
     // Remove merge state
     merge_state::remove(&claw_dir)?;
 
-    println!("Merge aborted. Working tree restored to {}.", &ms.merge.left_ref);
+    println!(
+        "Merge aborted. Working tree restored to {}.",
+        &ms.merge.left_ref
+    );
     Ok(())
 }
 

@@ -44,7 +44,9 @@ impl IgnoreRules {
             }
         }
 
-        let globs = builder.build().unwrap_or_else(|_| GlobSetBuilder::new().build().unwrap());
+        let globs = builder
+            .build()
+            .unwrap_or_else(|_| GlobSetBuilder::new().build().unwrap());
         Self { globs }
     }
 

@@ -247,7 +247,7 @@ claw git-export              Export to Git format
 Requires [Rust](https://rustup.rs/) (stable) and [protoc](https://grpc.io/docs/protoc-installation/) (for Protocol Buffer compilation).
 
 ```bash
-git clone https://github.com/<your-org>/claw.git
+git clone https://github.com/shree-git/claw.git
 cd claw
 cargo build --release
 ```

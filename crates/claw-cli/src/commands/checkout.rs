@@ -21,28 +21,29 @@ pub fn run(args: CheckoutArgs) -> anyhow::Result<()> {
     let store = ClawStore::open(&root)?;
 
     // Resolve target: try branch ref first, then object ID
-    let (new_head_state, target_id) = if let Some(id) = store.get_ref(&format!("heads/{}", args.target))? {
-        (
-            HeadState::Symbolic {
-                ref_name: format!("heads/{}", args.target),
-            },
-            id,
-        )
-    } else if let Ok(id) = ObjectId::from_hex(&args.target) {
-        if store.has_object(&id) {
-            (HeadState::Detached { target: id }, id)
+    let (new_head_state, target_id) =
+        if let Some(id) = store.get_ref(&format!("heads/{}", args.target))? {
+            (
+                HeadState::Symbolic {
+                    ref_name: format!("heads/{}", args.target),
+                },
+                id,
+            )
+        } else if let Ok(id) = ObjectId::from_hex(&args.target) {
+            if store.has_object(&id) {
+                (HeadState::Detached { target: id }, id)
+            } else {
+                anyhow::bail!("object not found: {}", args.target);
+            }
+        } else if let Ok(id) = ObjectId::from_display(&args.target) {
+            if store.has_object(&id) {
+                (HeadState::Detached { target: id }, id)
+            } else {
+                anyhow::bail!("object not found: {}", args.target);
+            }
         } else {
-            anyhow::bail!("object not found: {}", args.target);
-        }
-    } else if let Ok(id) = ObjectId::from_display(&args.target) {
-        if store.has_object(&id) {
-            (HeadState::Detached { target: id }, id)
-        } else {
-            anyhow::bail!("object not found: {}", args.target);
-        }
-    } else {
-        anyhow::bail!("unknown branch or revision: {}", args.target);
-    };
+            anyhow::bail!("unknown branch or revision: {}", args.target);
+        };
 
     // Load target revision
     let target_obj = store.load_object(&target_id)?;
@@ -124,12 +125,10 @@ fn remove_empty_dirs(dir: &std::path::Path, stop_at: &std::path::Path) -> std::i
     if dir == stop_at || !dir.starts_with(stop_at) {
         return Ok(());
     }
-    if dir.is_dir() {
-        if std::fs::read_dir(dir)?.next().is_none() {
-            std::fs::remove_dir(dir)?;
-            if let Some(parent) = dir.parent() {
-                remove_empty_dirs(parent, stop_at)?;
-            }
+    if dir.is_dir() && std::fs::read_dir(dir)?.next().is_none() {
+        std::fs::remove_dir(dir)?;
+        if let Some(parent) = dir.parent() {
+            remove_empty_dirs(parent, stop_at)?;
         }
     }
     Ok(())

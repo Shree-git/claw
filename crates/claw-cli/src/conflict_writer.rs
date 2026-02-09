@@ -28,7 +28,10 @@ pub fn write_text_conflict(
 
     // Find common prefix
     let mut i = 0;
-    let min_len = base_lines.len().min(left_lines.len()).min(right_lines.len());
+    let min_len = base_lines
+        .len()
+        .min(left_lines.len())
+        .min(right_lines.len());
     while i < min_len && left_lines[i] == right_lines[i] && left_lines[i] == base_lines[i] {
         output.push_str(left_lines[i]);
         output.push('\n');

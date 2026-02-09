@@ -16,7 +16,10 @@ impl LockFile {
             .create_new(true)
             .open(&lock_path)
         {
-            Ok(handle) => Ok(Self { path: lock_path, _handle: handle }),
+            Ok(handle) => Ok(Self {
+                path: lock_path,
+                _handle: handle,
+            }),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 Err(StoreError::LockContention(target.to_path_buf()))
             }

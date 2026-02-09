@@ -45,7 +45,10 @@ impl PackWriter {
 
     /// Write pack and index as separate files with hash-based naming.
     /// Returns (pack_path, idx_path).
-    pub fn write_pack(&self, layout: &RepoLayout) -> Result<(std::path::PathBuf, std::path::PathBuf), StoreError> {
+    pub fn write_pack(
+        &self,
+        layout: &RepoLayout,
+    ) -> Result<(std::path::PathBuf, std::path::PathBuf), StoreError> {
         // Build pack data
         let mut data = Vec::new();
 
@@ -88,7 +91,11 @@ impl PackWriter {
     }
 
     /// Legacy write with explicit name (for backward compat).
-    pub fn write_pack_named(&self, layout: &RepoLayout, pack_name: &str) -> Result<std::path::PathBuf, StoreError> {
+    pub fn write_pack_named(
+        &self,
+        layout: &RepoLayout,
+        pack_name: &str,
+    ) -> Result<std::path::PathBuf, StoreError> {
         let pack_path = layout.packs_dir().join(format!("{pack_name}.clwpack"));
 
         let mut data = Vec::new();
@@ -141,8 +148,14 @@ pub fn read_pack_index(idx_path: &std::path::Path) -> Result<Vec<(ObjectId, u64)
             id_bytes.copy_from_slice(&data[pos..pos + 32]);
             pos += 32;
             let offset = u64::from_le_bytes([
-                data[pos], data[pos + 1], data[pos + 2], data[pos + 3],
-                data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7],
+                data[pos],
+                data[pos + 1],
+                data[pos + 2],
+                data[pos + 3],
+                data[pos + 4],
+                data[pos + 5],
+                data[pos + 6],
+                data[pos + 7],
             ]);
             pos += 8;
             entries.push((ObjectId::from_bytes(id_bytes), offset));
@@ -178,8 +191,14 @@ fn read_pack_index_inline(pack_path: &std::path::Path) -> Result<Vec<(ObjectId, 
         id_bytes.copy_from_slice(&data[pos..pos + 32]);
         pos += 32;
         let offset = u64::from_le_bytes([
-            data[pos], data[pos + 1], data[pos + 2], data[pos + 3],
-            data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7],
+            data[pos],
+            data[pos + 1],
+            data[pos + 2],
+            data[pos + 3],
+            data[pos + 4],
+            data[pos + 5],
+            data[pos + 6],
+            data[pos + 7],
         ]);
         pos += 8;
         entries.push((ObjectId::from_bytes(id_bytes), offset));
@@ -188,11 +207,17 @@ fn read_pack_index_inline(pack_path: &std::path::Path) -> Result<Vec<(ObjectId, 
     Ok(entries)
 }
 
-pub fn read_object_from_pack(pack_path: &std::path::Path, offset: u64) -> Result<Object, StoreError> {
+pub fn read_object_from_pack(
+    pack_path: &std::path::Path,
+    offset: u64,
+) -> Result<Object, StoreError> {
     let data = std::fs::read(pack_path)?;
     let offset = offset as usize;
     let len = u32::from_le_bytes([
-        data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
     ]) as usize;
     let cof_data = &data[offset + 4..offset + 4 + len];
     let (type_tag, payload) = cof_decode(cof_data)?;

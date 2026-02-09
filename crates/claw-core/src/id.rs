@@ -24,8 +24,7 @@ impl ObjectId {
     }
 
     pub fn from_hex(s: &str) -> Result<Self, CoreError> {
-        let bytes = hex::decode(s)
-            .map_err(|e| CoreError::InvalidObjectId(e.to_string()))?;
+        let bytes = hex::decode(s).map_err(|e| CoreError::InvalidObjectId(e.to_string()))?;
         let arr: [u8; 32] = bytes
             .try_into()
             .map_err(|_| CoreError::InvalidObjectId("expected 32 bytes".into()))?;
@@ -33,9 +32,9 @@ impl ObjectId {
     }
 
     pub fn from_display(s: &str) -> Result<Self, CoreError> {
-        let encoded = s
-            .strip_prefix(OBJECT_ID_PREFIX)
-            .ok_or_else(|| CoreError::InvalidObjectId(format!("missing prefix '{OBJECT_ID_PREFIX}'")))?;
+        let encoded = s.strip_prefix(OBJECT_ID_PREFIX).ok_or_else(|| {
+            CoreError::InvalidObjectId(format!("missing prefix '{OBJECT_ID_PREFIX}'"))
+        })?;
         let upper = encoded.to_uppercase();
         let bytes = BASE32_NOPAD
             .decode(upper.as_bytes())
@@ -87,8 +86,7 @@ impl IntentId {
     }
 
     pub fn from_string(s: &str) -> Result<Self, CoreError> {
-        let ulid = Ulid::from_string(s)
-            .map_err(|e| CoreError::InvalidObjectId(e.to_string()))?;
+        let ulid = Ulid::from_string(s).map_err(|e| CoreError::InvalidObjectId(e.to_string()))?;
         Ok(Self(ulid))
     }
 }
@@ -128,8 +126,7 @@ impl ChangeId {
     }
 
     pub fn from_string(s: &str) -> Result<Self, CoreError> {
-        let ulid = Ulid::from_string(s)
-            .map_err(|e| CoreError::InvalidObjectId(e.to_string()))?;
+        let ulid = Ulid::from_string(s).map_err(|e| CoreError::InvalidObjectId(e.to_string()))?;
         Ok(Self(ulid))
     }
 }

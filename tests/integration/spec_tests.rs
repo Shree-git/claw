@@ -17,7 +17,10 @@ fn test_object_roundtrip_all_12_types() {
     let (_tmp, store) = make_test_store();
 
     // 1. Blob
-    let blob = Object::Blob(Blob { data: b"hello world".to_vec(), media_type: None });
+    let blob = Object::Blob(Blob {
+        data: b"hello world".to_vec(),
+        media_type: None,
+    });
     let blob_id = store.store_object(&blob).unwrap();
     let loaded = store.load_object(&blob_id).unwrap();
     if let Object::Blob(b) = loaded {
@@ -54,7 +57,10 @@ fn test_object_roundtrip_all_12_types() {
         codec_payload: None,
     });
     let patch_id = store.store_object(&patch).unwrap();
-    assert!(matches!(store.load_object(&patch_id).unwrap(), Object::Patch(_)));
+    assert!(matches!(
+        store.load_object(&patch_id).unwrap(),
+        Object::Patch(_)
+    ));
 
     // 4. Revision
     let revision = Object::Revision(Revision {
@@ -70,7 +76,10 @@ fn test_object_roundtrip_all_12_types() {
         policy_evidence: vec![],
     });
     let rev_id = store.store_object(&revision).unwrap();
-    assert!(matches!(store.load_object(&rev_id).unwrap(), Object::Revision(_)));
+    assert!(matches!(
+        store.load_object(&rev_id).unwrap(),
+        Object::Revision(_)
+    ));
 
     // 5. Snapshot
     let snapshot = Object::Snapshot(Snapshot {
@@ -79,7 +88,10 @@ fn test_object_roundtrip_all_12_types() {
         created_at_ms: 1000,
     });
     let snap_id = store.store_object(&snapshot).unwrap();
-    assert!(matches!(store.load_object(&snap_id).unwrap(), Object::Snapshot(_)));
+    assert!(matches!(
+        store.load_object(&snap_id).unwrap(),
+        Object::Snapshot(_)
+    ));
 
     // 6. Intent
     let intent = Object::Intent(Intent {
@@ -99,7 +111,10 @@ fn test_object_roundtrip_all_12_types() {
         updated_at_ms: 1000,
     });
     let intent_id = store.store_object(&intent).unwrap();
-    assert!(matches!(store.load_object(&intent_id).unwrap(), Object::Intent(_)));
+    assert!(matches!(
+        store.load_object(&intent_id).unwrap(),
+        Object::Intent(_)
+    ));
 
     // 7. Change
     let change = Object::Change(Change {
@@ -112,7 +127,10 @@ fn test_object_roundtrip_all_12_types() {
         updated_at_ms: 1000,
     });
     let change_obj_id = store.store_object(&change).unwrap();
-    assert!(matches!(store.load_object(&change_obj_id).unwrap(), Object::Change(_)));
+    assert!(matches!(
+        store.load_object(&change_obj_id).unwrap(),
+        Object::Change(_)
+    ));
 
     // 8. Conflict
     let conflict = Object::Conflict(Conflict {
@@ -128,7 +146,10 @@ fn test_object_roundtrip_all_12_types() {
         created_at_ms: 1000,
     });
     let conflict_obj_id = store.store_object(&conflict).unwrap();
-    assert!(matches!(store.load_object(&conflict_obj_id).unwrap(), Object::Conflict(_)));
+    assert!(matches!(
+        store.load_object(&conflict_obj_id).unwrap(),
+        Object::Conflict(_)
+    ));
 
     // 9. Capsule
     let capsule = Object::Capsule(Capsule {
@@ -146,7 +167,10 @@ fn test_object_roundtrip_all_12_types() {
         signatures: vec![],
     });
     let capsule_obj_id = store.store_object(&capsule).unwrap();
-    assert!(matches!(store.load_object(&capsule_obj_id).unwrap(), Object::Capsule(_)));
+    assert!(matches!(
+        store.load_object(&capsule_obj_id).unwrap(),
+        Object::Capsule(_)
+    ));
 
     // 10. Policy
     let policy = Object::Policy(Policy {
@@ -159,7 +183,10 @@ fn test_object_roundtrip_all_12_types() {
         min_trust_score: None,
     });
     let policy_obj_id = store.store_object(&policy).unwrap();
-    assert!(matches!(store.load_object(&policy_obj_id).unwrap(), Object::Policy(_)));
+    assert!(matches!(
+        store.load_object(&policy_obj_id).unwrap(),
+        Object::Policy(_)
+    ));
 
     // 11. Workstream
     let workstream = Object::Workstream(Workstream {
@@ -167,7 +194,10 @@ fn test_object_roundtrip_all_12_types() {
         change_stack: vec![],
     });
     let ws_obj_id = store.store_object(&workstream).unwrap();
-    assert!(matches!(store.load_object(&ws_obj_id).unwrap(), Object::Workstream(_)));
+    assert!(matches!(
+        store.load_object(&ws_obj_id).unwrap(),
+        Object::Workstream(_)
+    ));
 
     // 12. RefLog
     let reflog = Object::RefLog(RefLog {
@@ -181,7 +211,10 @@ fn test_object_roundtrip_all_12_types() {
         }],
     });
     let reflog_obj_id = store.store_object(&reflog).unwrap();
-    assert!(matches!(store.load_object(&reflog_obj_id).unwrap(), Object::RefLog(_)));
+    assert!(matches!(
+        store.load_object(&reflog_obj_id).unwrap(),
+        Object::RefLog(_)
+    ));
 }
 
 // === Test 2: Deterministic hashing across invocations ===
@@ -200,7 +233,10 @@ fn test_deterministic_hashing() {
 
     // Store and retrieve - same ID
     let (_tmp, store) = make_test_store();
-    let obj = Object::Blob(Blob { data: payload.to_vec(), media_type: None });
+    let obj = Object::Blob(Blob {
+        data: payload.to_vec(),
+        media_type: None,
+    });
     let id1 = store.store_object(&obj).unwrap();
     let id2 = store.store_object(&obj).unwrap();
     assert_eq!(id1, id2, "storing same object must produce same ID");
@@ -224,7 +260,10 @@ fn test_patch_commute_and_conflict() {
 
     // Non-overlapping should commute
     let commute_result = codec.commute(&left_ops, &right_ops);
-    assert!(commute_result.is_ok(), "non-overlapping patches should commute");
+    assert!(
+        commute_result.is_ok(),
+        "non-overlapping patches should commute"
+    );
 
     // Overlapping patches should fail to commute
     let left_conflict = b"line1\nleft\nline3\nline4\nline5\n";
@@ -234,7 +273,10 @@ fn test_patch_commute_and_conflict() {
     let right_conflict_ops = codec.diff(base, right_conflict).unwrap();
 
     let conflict_result = codec.commute(&left_conflict_ops, &right_conflict_ops);
-    assert!(conflict_result.is_err(), "overlapping patches should fail to commute");
+    assert!(
+        conflict_result.is_err(),
+        "overlapping patches should fail to commute"
+    );
 }
 
 // === Test 4: JSON semantic merge success ===
@@ -250,25 +292,34 @@ fn test_json_semantic_merge() {
         "name": "project",
         "version": "1.0",
         "deps": {"a": "1.0", "b": "2.0"}
-    })).unwrap();
+    }))
+    .unwrap();
 
     let left = serde_json::to_vec(&json!({
         "name": "project",
         "version": "1.1",
         "deps": {"a": "1.0", "b": "2.0"}
-    })).unwrap();
+    }))
+    .unwrap();
 
     let right = serde_json::to_vec(&json!({
         "name": "project",
         "version": "1.0",
         "deps": {"a": "1.0", "b": "2.0", "c": "3.0"}
-    })).unwrap();
+    }))
+    .unwrap();
 
     let merged = codec.merge3(&base, &left, &right).unwrap();
     let merged_val: serde_json::Value = serde_json::from_slice(&merged).unwrap();
 
-    assert_eq!(merged_val["version"], "1.1", "left change should be preserved");
-    assert_eq!(merged_val["deps"]["c"], "3.0", "right addition should be preserved");
+    assert_eq!(
+        merged_val["version"], "1.1",
+        "left change should be preserved"
+    );
+    assert_eq!(
+        merged_val["deps"]["c"], "3.0",
+        "right addition should be preserved"
+    );
 }
 
 // === Test 5: Conflict persistence and later resolution ===
@@ -277,7 +328,10 @@ fn test_conflict_persistence_and_resolution() {
     let (_tmp, store) = make_test_store();
 
     // Create base objects
-    let blob = Object::Blob(Blob { data: b"base".to_vec(), media_type: None });
+    let blob = Object::Blob(Blob {
+        data: b"base".to_vec(),
+        media_type: None,
+    });
     let blob_id = store.store_object(&blob).unwrap();
 
     let tree = Object::Tree(Tree {
@@ -315,7 +369,10 @@ fn test_conflict_persistence_and_resolution() {
     assert!(loaded_conflict.resolution_patch_ids.is_empty());
 
     // Resolve the conflict
-    let resolution_blob = Object::Blob(Blob { data: b"resolved content".to_vec(), media_type: None });
+    let resolution_blob = Object::Blob(Blob {
+        data: b"resolved content".to_vec(),
+        media_type: None,
+    });
     let resolution_id = store.store_object(&resolution_blob).unwrap();
 
     let resolved = Object::Conflict(Conflict {
@@ -339,9 +396,9 @@ fn test_conflict_persistence_and_resolution() {
 // === Test 6: Capsule redaction enforcement ===
 #[test]
 fn test_capsule_redaction_enforcement() {
+    use claw_crypto::capsule::build_capsule;
     use claw_crypto::encrypt::decrypt;
     use claw_crypto::keypair::KeyPair;
-    use claw_crypto::capsule::build_capsule;
 
     let kp = KeyPair::generate();
     let enc_key = [42u8; 32];
@@ -371,8 +428,8 @@ fn test_capsule_redaction_enforcement() {
 // === Test 7: Signature verification ===
 #[test]
 fn test_signature_verification() {
-    use claw_crypto::keypair::KeyPair;
     use claw_crypto::capsule::{build_capsule, verify_capsule};
+    use claw_crypto::keypair::KeyPair;
 
     let kp = KeyPair::generate();
     let kp2 = KeyPair::generate();
@@ -410,7 +467,10 @@ fn test_partial_clone_filter() {
     let (_tmp, store) = make_test_store();
 
     // Create objects
-    let blob = Object::Blob(Blob { data: b"test".to_vec(), media_type: None });
+    let blob = Object::Blob(Blob {
+        data: b"test".to_vec(),
+        media_type: None,
+    });
     let blob_id = store.store_object(&blob).unwrap();
 
     let patch_rs = Object::Patch(Patch {
@@ -467,7 +527,10 @@ fn test_git_export_determinism() {
     let (_tmp, store) = make_test_store();
 
     // Create a simple repo structure
-    let blob = Object::Blob(Blob { data: b"hello world\n".to_vec(), media_type: None });
+    let blob = Object::Blob(Blob {
+        data: b"hello world\n".to_vec(),
+        media_type: None,
+    });
     let blob_id = store.store_object(&blob).unwrap();
 
     let tree = Object::Tree(Tree {
@@ -515,8 +578,8 @@ fn test_git_export_determinism() {
 fn test_end_to_end_workflow() {
     use claw_merge::emit::merge;
     use claw_patch::CodecRegistry;
-    use claw_store::HeadState;
     use claw_store::tree_diff::{diff_trees, ChangeKind};
+    use claw_store::HeadState;
     use std::collections::HashSet;
 
     let tmp = tempfile::tempdir().unwrap();
@@ -532,7 +595,10 @@ fn test_end_to_end_workflow() {
     std::fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
 
     // Build initial tree: store blobs + trees manually (simulating scan_worktree)
-    let file_blob = Object::Blob(Blob { data: b"hello\n".to_vec(), media_type: None });
+    let file_blob = Object::Blob(Blob {
+        data: b"hello\n".to_vec(),
+        media_type: None,
+    });
     let file_blob_id = store.store_object(&file_blob).unwrap();
 
     let json_blob = Object::Blob(Blob {
@@ -541,7 +607,10 @@ fn test_end_to_end_workflow() {
     });
     let json_blob_id = store.store_object(&json_blob).unwrap();
 
-    let main_rs_blob = Object::Blob(Blob { data: b"fn main() {}\n".to_vec(), media_type: None });
+    let main_rs_blob = Object::Blob(Blob {
+        data: b"fn main() {}\n".to_vec(),
+        media_type: None,
+    });
     let main_rs_blob_id = store.store_object(&main_rs_blob).unwrap();
 
     let src_tree = Object::Tree(Tree {
@@ -588,13 +657,17 @@ fn test_end_to_end_workflow() {
         policy_evidence: vec![],
     });
     let rev1_id = store.store_object(&rev1).unwrap();
-    store.update_ref_cas("heads/main", None, &rev1_id, "test", "initial").unwrap();
+    store
+        .update_ref_cas("heads/main", None, &rev1_id, "test", "initial")
+        .unwrap();
 
     // Verify HEAD is on main
     let head = store.read_head().unwrap();
     assert_eq!(
         head,
-        HeadState::Symbolic { ref_name: "heads/main".to_string() }
+        HeadState::Symbolic {
+            ref_name: "heads/main".to_string()
+        }
     );
 
     // Verify ref resolves
@@ -609,17 +682,24 @@ fn test_end_to_end_workflow() {
     assert!(branch_names.contains("heads/feature"));
 
     // === Phase 3: "Checkout" feature (update HEAD) ===
-    store.write_head(&HeadState::Symbolic {
-        ref_name: "heads/feature".to_string(),
-    }).unwrap();
+    store
+        .write_head(&HeadState::Symbolic {
+            ref_name: "heads/feature".to_string(),
+        })
+        .unwrap();
     let head = store.read_head().unwrap();
     assert_eq!(
         head,
-        HeadState::Symbolic { ref_name: "heads/feature".to_string() }
+        HeadState::Symbolic {
+            ref_name: "heads/feature".to_string()
+        }
     );
 
     // === Phase 4: Modify file.txt on feature branch ===
-    let modified_blob = Object::Blob(Blob { data: b"modified on feature\n".to_vec(), media_type: None });
+    let modified_blob = Object::Blob(Blob {
+        data: b"modified on feature\n".to_vec(),
+        media_type: None,
+    });
     let modified_blob_id = store.store_object(&modified_blob).unwrap();
 
     let feature_tree = Object::Tree(Tree {
@@ -679,12 +759,22 @@ fn test_end_to_end_workflow() {
         policy_evidence: vec![],
     });
     let rev2_id = store.store_object(&rev2).unwrap();
-    store.update_ref_cas("heads/feature", Some(&rev1_id), &rev2_id, "test", "feature commit").unwrap();
+    store
+        .update_ref_cas(
+            "heads/feature",
+            Some(&rev1_id),
+            &rev2_id,
+            "test",
+            "feature commit",
+        )
+        .unwrap();
 
     // === Phase 5: Checkout main ===
-    store.write_head(&HeadState::Symbolic {
-        ref_name: "heads/main".to_string(),
-    }).unwrap();
+    store
+        .write_head(&HeadState::Symbolic {
+            ref_name: "heads/main".to_string(),
+        })
+        .unwrap();
 
     // Verify main still at rev1
     let main_id = store.get_ref("heads/main").unwrap().unwrap();
@@ -698,16 +788,28 @@ fn test_end_to_end_workflow() {
         &rev2_id,
         "test",
         "Merge feature into main",
-    ).unwrap();
+    )
+    .unwrap();
 
-    assert!(merge_result.conflicts.is_empty(), "merge should have no conflicts");
-    assert_eq!(merge_result.revision.parents.len(), 2, "merge revision should have 2 parents");
+    assert!(
+        merge_result.conflicts.is_empty(),
+        "merge should have no conflicts"
+    );
+    assert_eq!(
+        merge_result.revision.parents.len(),
+        2,
+        "merge revision should have 2 parents"
+    );
     assert_eq!(merge_result.revision.parents[0], rev1_id);
     assert_eq!(merge_result.revision.parents[1], rev2_id);
 
     // Store merge revision and update main ref
-    let merge_rev_id = store.store_object(&Object::Revision(merge_result.revision)).unwrap();
-    store.update_ref_cas("heads/main", Some(&rev1_id), &merge_rev_id, "test", "merge").unwrap();
+    let merge_rev_id = store
+        .store_object(&Object::Revision(merge_result.revision))
+        .unwrap();
+    store
+        .update_ref_cas("heads/main", Some(&rev1_id), &merge_rev_id, "test", "merge")
+        .unwrap();
 
     // === Phase 7: Verify final state ===
     let merge_obj = store.load_object(&merge_rev_id).unwrap();
@@ -718,7 +820,11 @@ fn test_end_to_end_workflow() {
 
     // Verify the merged tree contains the feature change
     let final_changes = diff_trees(&store, Some(&root_tree_id), Some(&merge_tree_id), "").unwrap();
-    assert_eq!(final_changes.len(), 1, "merged tree should differ from initial by 1 file");
+    assert_eq!(
+        final_changes.len(),
+        1,
+        "merged tree should differ from initial by 1 file"
+    );
     assert_eq!(final_changes[0].path, "file.txt");
 
     // Load the merged file.txt blob and verify content
@@ -738,7 +844,10 @@ fn test_end_to_end_workflow() {
 
         // Verify other files are unchanged
         let json_entry = tree.entries.iter().find(|e| e.name == "data.json").unwrap();
-        assert_eq!(json_entry.object_id, json_blob_id, "data.json should be unchanged");
+        assert_eq!(
+            json_entry.object_id, json_blob_id,
+            "data.json should be unchanged"
+        );
 
         let src_entry = tree.entries.iter().find(|e| e.name == "src").unwrap();
         assert_eq!(src_entry.object_id, src_tree_id, "src/ should be unchanged");
@@ -758,13 +867,23 @@ fn test_end_to_end_workflow() {
             break;
         }
     }
-    assert_eq!(log_ids.len(), 2, "log should have 2 entries (merge + initial)");
+    assert_eq!(
+        log_ids.len(),
+        2,
+        "log should have 2 entries (merge + initial)"
+    );
     assert_eq!(log_ids[0], merge_rev_id);
     assert_eq!(log_ids[1], rev1_id);
 
     // Verify branch refs
     let main_final = store.get_ref("heads/main").unwrap().unwrap();
-    assert_eq!(main_final, merge_rev_id, "main should point to merge revision");
+    assert_eq!(
+        main_final, merge_rev_id,
+        "main should point to merge revision"
+    );
     let feature_final = store.get_ref("heads/feature").unwrap().unwrap();
-    assert_eq!(feature_final, rev2_id, "feature should still point to its own revision");
+    assert_eq!(
+        feature_final, rev2_id,
+        "feature should still point to its own revision"
+    );
 }

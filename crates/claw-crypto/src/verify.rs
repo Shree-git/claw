@@ -2,7 +2,11 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
 use crate::CryptoError;
 
-pub fn verify(public_key_bytes: &[u8; 32], data: &[u8], signature: &[u8]) -> Result<bool, CryptoError> {
+pub fn verify(
+    public_key_bytes: &[u8; 32],
+    data: &[u8],
+    signature: &[u8],
+) -> Result<bool, CryptoError> {
     let verifying_key = VerifyingKey::from_bytes(public_key_bytes)
         .map_err(|e| CryptoError::InvalidKey(e.to_string()))?;
 
