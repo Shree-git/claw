@@ -1,6 +1,6 @@
-use claw_core::cof::{cof_decode, cof_encode};
+use claw_core::cof::cof_encode;
 use claw_core::hash::content_hash;
-use claw_core::id::{ChangeId, IntentId, ObjectId};
+use claw_core::id::{ChangeId, IntentId};
 use claw_core::object::{Object, TypeTag};
 use claw_core::types::*;
 use claw_store::ClawStore;
@@ -339,7 +339,7 @@ fn test_conflict_persistence_and_resolution() {
 // === Test 6: Capsule redaction enforcement ===
 #[test]
 fn test_capsule_redaction_enforcement() {
-    use claw_crypto::encrypt::{decrypt, encrypt};
+    use claw_crypto::encrypt::decrypt;
     use claw_crypto::keypair::KeyPair;
     use claw_crypto::capsule::build_capsule;
 
@@ -506,4 +506,265 @@ fn test_git_export_determinism() {
     // Both exports should produce identical SHA-1 hashes
     assert_eq!(sha1_1, sha1_2, "git export must be deterministic");
     assert_ne!(sha1_1, [0u8; 20], "SHA-1 should not be all zeros");
+}
+
+// === Test 10: End-to-end workflow ===
+// init -> create files -> snapshot -> branch -> checkout -> modify -> snapshot ->
+// checkout main -> integrate -> snapshot merge -> verify final tree
+#[test]
+fn test_end_to_end_workflow() {
+    use claw_merge::emit::merge;
+    use claw_patch::CodecRegistry;
+    use claw_store::HeadState;
+    use claw_store::tree_diff::{diff_trees, ChangeKind};
+    use std::collections::HashSet;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let store = ClawStore::init(root).unwrap();
+    let registry = CodecRegistry::default();
+
+    // === Phase 1: Initial snapshot on main ===
+    // Create files in the working directory
+    std::fs::write(root.join("file.txt"), "hello\n").unwrap();
+    std::fs::write(root.join("data.json"), r#"{"key": "value", "count": 1}"#).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+    // Build initial tree: store blobs + trees manually (simulating scan_worktree)
+    let file_blob = Object::Blob(Blob { data: b"hello\n".to_vec(), media_type: None });
+    let file_blob_id = store.store_object(&file_blob).unwrap();
+
+    let json_blob = Object::Blob(Blob {
+        data: br#"{"key": "value", "count": 1}"#.to_vec(),
+        media_type: None,
+    });
+    let json_blob_id = store.store_object(&json_blob).unwrap();
+
+    let main_rs_blob = Object::Blob(Blob { data: b"fn main() {}\n".to_vec(), media_type: None });
+    let main_rs_blob_id = store.store_object(&main_rs_blob).unwrap();
+
+    let src_tree = Object::Tree(Tree {
+        entries: vec![TreeEntry {
+            name: "main.rs".to_string(),
+            mode: FileMode::Regular,
+            object_id: main_rs_blob_id,
+        }],
+    });
+    let src_tree_id = store.store_object(&src_tree).unwrap();
+
+    let root_tree = Object::Tree(Tree {
+        entries: vec![
+            TreeEntry {
+                name: "data.json".to_string(),
+                mode: FileMode::Regular,
+                object_id: json_blob_id,
+            },
+            TreeEntry {
+                name: "file.txt".to_string(),
+                mode: FileMode::Regular,
+                object_id: file_blob_id,
+            },
+            TreeEntry {
+                name: "src".to_string(),
+                mode: FileMode::Directory,
+                object_id: src_tree_id,
+            },
+        ],
+    });
+    let root_tree_id = store.store_object(&root_tree).unwrap();
+
+    // Create initial revision
+    let rev1 = Object::Revision(Revision {
+        change_id: None,
+        parents: vec![],
+        patches: vec![],
+        snapshot_base: None,
+        tree: Some(root_tree_id),
+        capsule_id: None,
+        author: "test".to_string(),
+        created_at_ms: 1000,
+        summary: "initial commit".to_string(),
+        policy_evidence: vec![],
+    });
+    let rev1_id = store.store_object(&rev1).unwrap();
+    store.update_ref_cas("heads/main", None, &rev1_id, "test", "initial").unwrap();
+
+    // Verify HEAD is on main
+    let head = store.read_head().unwrap();
+    assert_eq!(
+        head,
+        HeadState::Symbolic { ref_name: "heads/main".to_string() }
+    );
+
+    // Verify ref resolves
+    let resolved = store.resolve_head().unwrap();
+    assert_eq!(resolved, Some(rev1_id));
+
+    // === Phase 2: Create branch "feature" ===
+    store.set_ref("heads/feature", &rev1_id).unwrap();
+    let branches = store.list_refs("heads/").unwrap();
+    let branch_names: HashSet<String> = branches.iter().map(|(n, _)| n.clone()).collect();
+    assert!(branch_names.contains("heads/main"));
+    assert!(branch_names.contains("heads/feature"));
+
+    // === Phase 3: "Checkout" feature (update HEAD) ===
+    store.write_head(&HeadState::Symbolic {
+        ref_name: "heads/feature".to_string(),
+    }).unwrap();
+    let head = store.read_head().unwrap();
+    assert_eq!(
+        head,
+        HeadState::Symbolic { ref_name: "heads/feature".to_string() }
+    );
+
+    // === Phase 4: Modify file.txt on feature branch ===
+    let modified_blob = Object::Blob(Blob { data: b"modified on feature\n".to_vec(), media_type: None });
+    let modified_blob_id = store.store_object(&modified_blob).unwrap();
+
+    let feature_tree = Object::Tree(Tree {
+        entries: vec![
+            TreeEntry {
+                name: "data.json".to_string(),
+                mode: FileMode::Regular,
+                object_id: json_blob_id,
+            },
+            TreeEntry {
+                name: "file.txt".to_string(),
+                mode: FileMode::Regular,
+                object_id: modified_blob_id,
+            },
+            TreeEntry {
+                name: "src".to_string(),
+                mode: FileMode::Directory,
+                object_id: src_tree_id,
+            },
+        ],
+    });
+    let feature_tree_id = store.store_object(&feature_tree).unwrap();
+
+    // Verify diff between main and feature trees
+    let changes = diff_trees(&store, Some(&root_tree_id), Some(&feature_tree_id), "").unwrap();
+    assert_eq!(changes.len(), 1, "should have exactly 1 changed file");
+    assert_eq!(changes[0].path, "file.txt");
+    assert_eq!(changes[0].kind, ChangeKind::Modified);
+
+    // Create feature revision with patch
+    let text_codec = registry.get_by_extension("txt");
+    let mut patches = vec![];
+    if let Some(codec) = text_codec {
+        let ops = codec.diff(b"hello\n", b"modified on feature\n").unwrap();
+        let patch = Patch {
+            target_path: "file.txt".to_string(),
+            codec_id: codec.id().to_string(),
+            base_object: Some(file_blob_id),
+            result_object: Some(modified_blob_id),
+            ops,
+            codec_payload: None,
+        };
+        let patch_id = store.store_object(&Object::Patch(patch)).unwrap();
+        patches.push(patch_id);
+    }
+
+    let rev2 = Object::Revision(Revision {
+        change_id: None,
+        parents: vec![rev1_id],
+        patches,
+        snapshot_base: None,
+        tree: Some(feature_tree_id),
+        capsule_id: None,
+        author: "test".to_string(),
+        created_at_ms: 2000,
+        summary: "change on feature".to_string(),
+        policy_evidence: vec![],
+    });
+    let rev2_id = store.store_object(&rev2).unwrap();
+    store.update_ref_cas("heads/feature", Some(&rev1_id), &rev2_id, "test", "feature commit").unwrap();
+
+    // === Phase 5: Checkout main ===
+    store.write_head(&HeadState::Symbolic {
+        ref_name: "heads/main".to_string(),
+    }).unwrap();
+
+    // Verify main still at rev1
+    let main_id = store.get_ref("heads/main").unwrap().unwrap();
+    assert_eq!(main_id, rev1_id);
+
+    // === Phase 6: Integrate feature into main ===
+    let merge_result = merge(
+        &store,
+        &registry,
+        &main_id,
+        &rev2_id,
+        "test",
+        "Merge feature into main",
+    ).unwrap();
+
+    assert!(merge_result.conflicts.is_empty(), "merge should have no conflicts");
+    assert_eq!(merge_result.revision.parents.len(), 2, "merge revision should have 2 parents");
+    assert_eq!(merge_result.revision.parents[0], rev1_id);
+    assert_eq!(merge_result.revision.parents[1], rev2_id);
+
+    // Store merge revision and update main ref
+    let merge_rev_id = store.store_object(&Object::Revision(merge_result.revision)).unwrap();
+    store.update_ref_cas("heads/main", Some(&rev1_id), &merge_rev_id, "test", "merge").unwrap();
+
+    // === Phase 7: Verify final state ===
+    let merge_obj = store.load_object(&merge_rev_id).unwrap();
+    let merge_tree_id = match merge_obj {
+        Object::Revision(ref rev) => rev.tree.unwrap(),
+        _ => panic!("expected revision"),
+    };
+
+    // Verify the merged tree contains the feature change
+    let final_changes = diff_trees(&store, Some(&root_tree_id), Some(&merge_tree_id), "").unwrap();
+    assert_eq!(final_changes.len(), 1, "merged tree should differ from initial by 1 file");
+    assert_eq!(final_changes[0].path, "file.txt");
+
+    // Load the merged file.txt blob and verify content
+    let merged_tree_obj = store.load_object(&merge_tree_id).unwrap();
+    if let Object::Tree(tree) = merged_tree_obj {
+        let file_entry = tree.entries.iter().find(|e| e.name == "file.txt").unwrap();
+        let blob_obj = store.load_object(&file_entry.object_id).unwrap();
+        if let Object::Blob(b) = blob_obj {
+            assert_eq!(
+                String::from_utf8_lossy(&b.data),
+                "modified on feature\n",
+                "merged file.txt should have feature content"
+            );
+        } else {
+            panic!("expected blob");
+        }
+
+        // Verify other files are unchanged
+        let json_entry = tree.entries.iter().find(|e| e.name == "data.json").unwrap();
+        assert_eq!(json_entry.object_id, json_blob_id, "data.json should be unchanged");
+
+        let src_entry = tree.entries.iter().find(|e| e.name == "src").unwrap();
+        assert_eq!(src_entry.object_id, src_tree_id, "src/ should be unchanged");
+    } else {
+        panic!("expected tree");
+    }
+
+    // Verify log: walk from merge back to initial
+    let mut current = Some(merge_rev_id);
+    let mut log_ids = vec![];
+    while let Some(id) = current {
+        log_ids.push(id);
+        let obj = store.load_object(&id).unwrap();
+        if let Object::Revision(rev) = obj {
+            current = rev.parents.first().copied();
+        } else {
+            break;
+        }
+    }
+    assert_eq!(log_ids.len(), 2, "log should have 2 entries (merge + initial)");
+    assert_eq!(log_ids[0], merge_rev_id);
+    assert_eq!(log_ids[1], rev1_id);
+
+    // Verify branch refs
+    let main_final = store.get_ref("heads/main").unwrap().unwrap();
+    assert_eq!(main_final, merge_rev_id, "main should point to merge revision");
+    let feature_final = store.get_ref("heads/feature").unwrap().unwrap();
+    assert_eq!(feature_final, rev2_id, "feature should still point to its own revision");
 }
