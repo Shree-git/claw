@@ -13,6 +13,3 @@ pub fn find_repo_root() -> anyhow::Result<PathBuf> {
     }
 }
 
-pub fn repo_root_or_current() -> PathBuf {
-    find_repo_root().unwrap_or_else(|_| std::env::current_dir().unwrap())
-}
