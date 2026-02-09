@@ -14,6 +14,7 @@ pub struct MergeResult {
     pub revision: Revision,
     pub new_patches: Vec<ObjectId>,
     pub conflicts: Vec<Conflict>,
+    pub ancestor: ObjectId,
 }
 
 /// Perform a merge of two revision heads.
@@ -115,14 +116,40 @@ pub fn merge(
         }
     }
 
-    // Load trees from heads for the merged revision tree
-    let left_obj = store.load_object(left_head)?;
-    let tree_id = if let Object::Revision(rev) = left_obj {
-        rev.tree
+    // Build merged tree from base + left + right trees using merged patches
+    let ancestor_tree = {
+        let obj = store.load_object(&ancestor)?;
+        match obj {
+            Object::Revision(rev) => rev.tree,
+            _ => None,
+        }
+    };
+    let left_tree = {
+        let obj = store.load_object(left_head)?;
+        match obj {
+            Object::Revision(rev) => rev.tree,
+            _ => None,
+        }
+    };
+    let right_tree = {
+        let obj = store.load_object(right_head)?;
+        match obj {
+            Object::Revision(rev) => rev.tree,
+            _ => None,
+        }
+    };
+
+    let tree_id = if conflicts.is_empty() {
+        Some(crate::tree_build::build_merged_tree(
+            store,
+            registry,
+            ancestor_tree.as_ref(),
+            left_tree.as_ref(),
+            right_tree.as_ref(),
+            &merged_patches,
+        )?)
     } else {
-        return Err(MergeError::Core(claw_core::CoreError::Deserialization(
-            "expected revision".into(),
-        )));
+        left_tree
     };
 
     // Store conflict objects
@@ -148,6 +175,7 @@ pub fn merge(
         revision,
         new_patches: merged_patches,
         conflicts,
+        ancestor,
     })
 }
 

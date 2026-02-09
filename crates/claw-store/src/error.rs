@@ -19,4 +19,6 @@ pub enum StoreError {
     Config(String),
     #[error("index error: {0}")]
     Index(String),
+    #[error("ref CAS conflict: expected {expected}, actual {actual}")]
+    RefCasConflict { expected: String, actual: String },
 }

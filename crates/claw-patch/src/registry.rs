@@ -7,6 +7,7 @@ use crate::PatchError;
 pub struct CodecRegistry {
     codecs: HashMap<String, Arc<dyn Codec>>,
     extension_map: HashMap<String, String>,
+    fallback: Option<Arc<dyn Codec>>,
 }
 
 impl CodecRegistry {
@@ -14,6 +15,7 @@ impl CodecRegistry {
         Self {
             codecs: HashMap::new(),
             extension_map: HashMap::new(),
+            fallback: None,
         }
     }
 
@@ -23,6 +25,12 @@ impl CodecRegistry {
             self.extension_map.insert(ext.to_string(), id.clone());
         }
         self.codecs.insert(id, codec);
+    }
+
+    pub fn set_fallback(&mut self, codec: Arc<dyn Codec>) {
+        let id = codec.id().to_string();
+        self.codecs.insert(id, codec.clone());
+        self.fallback = Some(codec);
     }
 
     pub fn get(&self, codec_id: &str) -> Result<&Arc<dyn Codec>, PatchError> {
@@ -36,7 +44,13 @@ impl CodecRegistry {
         self.codecs.get(codec_id)
     }
 
+    pub fn get_for_path(&self, path: &str) -> Option<&Arc<dyn Codec>> {
+        let ext = path.rsplit('.').next().unwrap_or("");
+        self.get_by_extension(ext).or(self.fallback.as_ref())
+    }
+
     pub fn default_registry() -> Self {
+        use crate::binary::BinaryCodec;
         use crate::json_tree::JsonTreeCodec;
         use crate::text_line::TextLineCodec;
 
@@ -46,6 +60,7 @@ impl CodecRegistry {
             &["txt", "md", "rs", "py", "js", "ts", "c", "h", "cpp", "go", "rb", "sh", "toml", "yaml", "yml"],
         );
         reg.register(Arc::new(JsonTreeCodec), &["json"]);
+        reg.set_fallback(Arc::new(BinaryCodec));
         reg
     }
 }

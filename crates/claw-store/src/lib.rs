@@ -1,13 +1,17 @@
 pub mod error;
+pub mod head;
 pub mod index;
 pub mod layout;
 pub mod lockfile;
 pub mod loose;
 pub mod pack;
+pub mod reflog;
 pub mod refs;
 pub mod repo;
+pub mod tree_diff;
 
 pub use error::StoreError;
+pub use head::HeadState;
 
 use std::path::Path;
 
@@ -27,6 +31,12 @@ impl ClawStore {
         let layout = RepoLayout::new(root);
         layout.create_dirs()?;
         repo::write_default_config(&layout)?;
+        head::write_head(
+            &layout,
+            &HeadState::Symbolic {
+                ref_name: "heads/main".to_string(),
+            },
+        )?;
         Ok(Self { layout })
     }
 
@@ -34,6 +44,18 @@ impl ClawStore {
         let layout = RepoLayout::new(root);
         if !layout.claw_dir().exists() {
             return Err(StoreError::NotARepository(root.to_path_buf()));
+        }
+        // Migrate: create HEAD and reflogs dir if missing
+        if !layout.head_file().exists() {
+            head::write_head(
+                &layout,
+                &HeadState::Symbolic {
+                    ref_name: "heads/main".to_string(),
+                },
+            )?;
+        }
+        if !layout.reflogs_dir().exists() {
+            std::fs::create_dir_all(layout.reflogs_dir())?;
         }
         Ok(Self { layout })
     }
@@ -80,5 +102,32 @@ impl ClawStore {
 
     pub fn delete_ref(&self, name: &str) -> Result<(), StoreError> {
         refs::delete_ref(&self.layout, name)
+    }
+
+    pub fn read_head(&self) -> Result<HeadState, StoreError> {
+        head::read_head(&self.layout)
+    }
+
+    pub fn write_head(&self, state: &HeadState) -> Result<(), StoreError> {
+        head::write_head(&self.layout, state)
+    }
+
+    pub fn resolve_head(&self) -> Result<Option<ObjectId>, StoreError> {
+        head::resolve_head(&self.layout)
+    }
+
+    pub fn update_ref_cas(
+        &self,
+        name: &str,
+        expected_old: Option<&ObjectId>,
+        new_target: &ObjectId,
+        author: &str,
+        message: &str,
+    ) -> Result<(), StoreError> {
+        refs::update_ref_cas(&self.layout, name, expected_old, new_target, author, message)
+    }
+
+    pub fn list_object_ids(&self) -> Result<Vec<ObjectId>, StoreError> {
+        loose::list_loose_object_ids(&self.layout)
     }
 }

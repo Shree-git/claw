@@ -7,6 +7,8 @@ use claw_core::cof::cof_encode;
 use claw_core::id::ObjectId;
 use claw_store::ClawStore;
 
+use crate::ancestry::is_ancestor;
+use crate::negotiation::find_reachable_objects;
 use crate::partial_clone::PartialCloneFilter;
 use crate::proto::sync::sync_service_server::SyncService;
 use crate::proto::sync::*;
@@ -48,6 +50,15 @@ fn convert_filter(filter: &crate::proto::sync::PartialCloneFilter) -> PartialClo
             None
         },
     }
+}
+
+fn decode_object_id(msg: &crate::proto::common::ObjectId) -> Result<ObjectId, Status> {
+    let id_bytes: [u8; 32] = msg
+        .hash
+        .as_slice()
+        .try_into()
+        .map_err(|_| Status::invalid_argument("invalid object id"))?;
+    Ok(ObjectId::from_bytes(id_bytes))
 }
 
 #[tonic::async_trait]
@@ -98,22 +109,43 @@ impl SyncService for SyncServer {
 
         tokio::spawn(async move {
             let store = store.read().await;
-            for want in &req.want {
-                let id_bytes: [u8; 32] = want
-                    .hash
-                    .as_slice()
-                    .try_into()
-                    .unwrap_or([0u8; 32]);
-                let id = ObjectId::from_bytes(id_bytes);
+
+            // Compute want_set = reachable from want_ids
+            let want_ids: Vec<ObjectId> = req
+                .want
+                .iter()
+                .filter_map(|msg| {
+                    let bytes: [u8; 32] = msg.hash.as_slice().try_into().ok()?;
+                    Some(ObjectId::from_bytes(bytes))
+                })
+                .collect();
+
+            let have_ids: Vec<ObjectId> = req
+                .have
+                .iter()
+                .filter_map(|msg| {
+                    let bytes: [u8; 32] = msg.hash.as_slice().try_into().ok()?;
+                    Some(ObjectId::from_bytes(bytes))
+                })
+                .collect();
+
+            let want_set = find_reachable_objects(&store, &want_ids);
+            let have_set = find_reachable_objects(&store, &have_ids);
+
+            // Send want_set - have_set
+            for id in &want_set {
+                if have_set.contains(id) {
+                    continue;
+                }
 
                 // Apply partial clone filter if present
                 if let Some(ref f) = filter {
-                    if !f.matches_object(&store, &id) {
+                    if !f.matches_object(&store, id) {
                         continue;
                     }
                 }
 
-                if let Ok(obj) = store.load_object(&id) {
+                if let Ok(obj) = store.load_object(id) {
                     let payload = obj.serialize_payload().unwrap_or_default();
                     let type_tag = obj.type_tag();
                     let cof_data = cof_encode(type_tag, &payload).unwrap_or_default();
@@ -186,14 +218,57 @@ impl SyncService for SyncServer {
         let req = request.into_inner();
         let store = self.store.write().await;
 
+        // Two-pass: first verify all CAS conditions, then apply
+        // Pass 1: verify
+        for update in &req.updates {
+            let current = store
+                .get_ref(&update.name)
+                .map_err(|e| Status::internal(e.to_string()))?;
+
+            let expected_old = update
+                .old_target
+                .as_ref()
+                .map(|msg| decode_object_id(msg))
+                .transpose()?;
+
+            match (&expected_old, &current) {
+                (None, None) => {} // Creating new ref
+                (Some(expected), Some(actual)) if expected == actual => {}
+                (None, Some(_)) if update.force => {} // Force override existing ref
+                _ => {
+                    return Ok(Response::new(UpdateRefsResponse {
+                        success: false,
+                        message: format!(
+                            "CAS conflict on ref '{}': expected {:?}, actual {:?}",
+                            update.name,
+                            expected_old.map(|id| id.to_hex()),
+                            current.map(|id| id.to_hex()),
+                        ),
+                    }));
+                }
+            }
+
+            // FF check: verify new is descendant of old (unless force)
+            if let Some(new_target) = &update.new_target {
+                let new_id = decode_object_id(new_target)?;
+                if let Some(ref old_id) = current {
+                    if !update.force && !is_ancestor(&store, old_id, &new_id) {
+                        return Ok(Response::new(UpdateRefsResponse {
+                            success: false,
+                            message: format!(
+                                "non-fast-forward update on ref '{}'; use force to override",
+                                update.name
+                            ),
+                        }));
+                    }
+                }
+            }
+        }
+
+        // Pass 2: apply all updates
         for update in &req.updates {
             if let Some(new_target) = &update.new_target {
-                let id_bytes: [u8; 32] = new_target
-                    .hash
-                    .as_slice()
-                    .try_into()
-                    .unwrap_or([0u8; 32]);
-                let id = ObjectId::from_bytes(id_bytes);
+                let id = decode_object_id(new_target)?;
                 store
                     .set_ref(&update.name, &id)
                     .map_err(|e| Status::internal(e.to_string()))?;

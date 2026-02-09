@@ -3,8 +3,13 @@ use tracing_subscriber::EnvFilter;
 
 mod commands;
 mod config;
+mod conflict_writer;
+mod diff_render;
 mod error;
+mod ignore;
+mod merge_state;
 mod output;
+mod worktree;
 
 use commands::Commands;
 

@@ -32,6 +32,33 @@ pub fn write_loose_object(layout: &RepoLayout, id: &ObjectId, data: &[u8]) -> Re
     Ok(())
 }
 
+pub fn list_loose_object_ids(layout: &RepoLayout) -> Result<Vec<ObjectId>, StoreError> {
+    let objects_dir = layout.objects_dir();
+    if !objects_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut ids = Vec::new();
+    for shard_entry in std::fs::read_dir(&objects_dir)? {
+        let shard_entry = shard_entry?;
+        let shard_path = shard_entry.path();
+        if !shard_path.is_dir() {
+            continue;
+        }
+        let shard_name = shard_entry.file_name();
+        let shard_str = shard_name.to_string_lossy();
+        for obj_entry in std::fs::read_dir(&shard_path)? {
+            let obj_entry = obj_entry?;
+            let obj_name = obj_entry.file_name();
+            let obj_str = obj_name.to_string_lossy();
+            let hex = format!("{}{}", shard_str, obj_str);
+            if let Ok(id) = ObjectId::from_hex(&hex) {
+                ids.push(id);
+            }
+        }
+    }
+    Ok(ids)
+}
+
 pub fn read_loose_object(layout: &RepoLayout, id: &ObjectId) -> Result<Vec<u8>, StoreError> {
     let path = loose_object_path(layout, id);
     if !path.exists() {

@@ -4,6 +4,7 @@ use crate::StoreError;
 
 pub struct LockFile {
     path: PathBuf,
+    _handle: std::fs::File,
 }
 
 impl LockFile {
@@ -15,7 +16,7 @@ impl LockFile {
             .create_new(true)
             .open(&lock_path)
         {
-            Ok(_) => Ok(Self { path: lock_path }),
+            Ok(handle) => Ok(Self { path: lock_path, _handle: handle }),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 Err(StoreError::LockContention(target.to_path_buf()))
             }

@@ -1,17 +1,14 @@
+use claw_core::id::ObjectId;
 use claw_core::types::Revision;
 
 /// Convert a claw Revision to git commit object bytes.
-/// Git commit format:
-/// tree <hex-sha1>
-/// parent <hex-sha1>  (one per parent)
-/// author <name> <email> <timestamp> <tz>
-/// committer <name> <email> <timestamp> <tz>
-///
-/// <message>
 pub fn to_git_commit(
     rev: &Revision,
     tree_sha1: &[u8; 20],
     parent_sha1s: &[[u8; 20]],
+    rev_id: &ObjectId,
+    change_id: Option<&claw_core::id::ChangeId>,
+    intent_id: Option<&claw_core::id::IntentId>,
 ) -> Vec<u8> {
     let mut content = String::new();
 
@@ -26,7 +23,6 @@ pub fn to_git_commit(
     } else {
         &rev.author
     };
-    // created_at_ms is milliseconds, git uses seconds
     let timestamp = rev.created_at_ms / 1000;
 
     content.push_str(&format!(
@@ -41,6 +37,15 @@ pub fn to_git_commit(
     content.push_str(&rev.summary);
     if !rev.summary.ends_with('\n') {
         content.push('\n');
+    }
+
+    // Trailers
+    content.push_str(&format!("\nClaw-Revision: {}\n", rev_id.to_hex()));
+    if let Some(cid) = change_id {
+        content.push_str(&format!("Claw-Change: {}\n", cid));
+    }
+    if let Some(iid) = intent_id {
+        content.push_str(&format!("Claw-Intent: {}\n", iid));
     }
 
     let header = format!("commit {}\0", content.len());

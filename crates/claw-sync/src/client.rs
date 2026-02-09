@@ -95,6 +95,34 @@ impl SyncClient {
         Ok(fetched)
     }
 
+    pub async fn update_refs(
+        &mut self,
+        updates: &[(String, Option<ObjectId>, ObjectId)],
+        force: bool,
+    ) -> Result<UpdateRefsResponse, SyncError> {
+        let proto_updates: Vec<RefUpdate> = updates
+            .iter()
+            .map(|(name, old, new)| RefUpdate {
+                name: name.clone(),
+                old_target: old.map(|id| crate::proto::common::ObjectId {
+                    hash: id.as_bytes().to_vec(),
+                }),
+                new_target: Some(crate::proto::common::ObjectId {
+                    hash: new.as_bytes().to_vec(),
+                }),
+                force,
+            })
+            .collect();
+
+        let resp = self
+            .client
+            .update_refs(UpdateRefsRequest {
+                updates: proto_updates,
+            })
+            .await?;
+        Ok(resp.into_inner())
+    }
+
     pub async fn push_objects(
         &mut self,
         store: &ClawStore,

@@ -30,6 +30,43 @@ pub fn delete_ref(layout: &RepoLayout, name: &str) -> Result<(), StoreError> {
     Ok(())
 }
 
+pub fn update_ref_cas(
+    layout: &RepoLayout,
+    name: &str,
+    expected_old: Option<&ObjectId>,
+    new_target: &ObjectId,
+    author: &str,
+    message: &str,
+) -> Result<(), StoreError> {
+    use crate::lockfile::LockFile;
+    use crate::reflog;
+
+    let ref_path = layout.refs_dir().join(name);
+    let _lock = LockFile::acquire(&ref_path)?;
+
+    let current = read_ref(layout, name)?;
+
+    match (expected_old, &current) {
+        (None, None) => {}
+        (Some(expected), Some(actual)) if expected == actual => {}
+        (expected, actual) => {
+            return Err(StoreError::RefCasConflict {
+                expected: expected
+                    .map(|id| id.to_hex())
+                    .unwrap_or_else(|| "none".to_string()),
+                actual: actual
+                    .as_ref()
+                    .map(|id| id.to_hex())
+                    .unwrap_or_else(|| "none".to_string()),
+            });
+        }
+    }
+
+    write_ref(layout, name, new_target)?;
+    reflog::append_reflog(layout, name, current.as_ref(), new_target, author, message)?;
+    Ok(())
+}
+
 pub fn list_refs(layout: &RepoLayout, prefix: &str) -> Result<Vec<(String, ObjectId)>, StoreError> {
     let base = layout.refs_dir().join(prefix);
     if !base.exists() {

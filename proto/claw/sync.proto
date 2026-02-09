@@ -72,6 +72,7 @@ message RefUpdate {
   string name = 1;
   claw.common.ObjectId old_target = 2;
   claw.common.ObjectId new_target = 3;
+  bool force = 4;
 }
 
 message UpdateRefsResponse {

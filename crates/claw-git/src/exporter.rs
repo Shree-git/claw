@@ -24,6 +24,10 @@ impl<'a> GitExporter<'a> {
         }
     }
 
+    pub fn get_sha1(&self, claw_id: &ObjectId) -> Option<[u8; 20]> {
+        self.sha1_map.get(claw_id).copied()
+    }
+
     /// Export the claw DAG starting from a revision to a git object directory.
     pub fn export(&mut self, head: &ObjectId, git_objects_dir: &Path) -> Result<[u8; 20], GitExportError> {
         std::fs::create_dir_all(git_objects_dir)?;
@@ -52,8 +56,20 @@ impl<'a> GitExporter<'a> {
         let tree_id = rev.tree.ok_or_else(|| GitExportError::InvalidType("revision has no tree".into()))?;
         let tree_sha1 = self.export_tree(&tree_id, git_dir)?;
 
+        // Resolve intent_id from change if available
+        let intent_id = rev.change_id.as_ref().and_then(|cid| {
+            let change_ref = format!("changes/{}", cid);
+            let change_obj_id = self.store.get_ref(&change_ref).ok()??;
+            let change_obj = self.store.load_object(&change_obj_id).ok()?;
+            if let Object::Change(c) = change_obj {
+                Some(c.intent_id)
+            } else {
+                None
+            }
+        });
+
         // Build commit
-        let commit_data = to_git_commit(&rev, &tree_sha1, &parent_sha1s);
+        let commit_data = to_git_commit(&rev, &tree_sha1, &parent_sha1s, rev_id, rev.change_id.as_ref(), intent_id.as_ref());
         let sha1 = git_sha1(&commit_data);
         self.write_git_object(git_dir, &sha1, &commit_data)?;
         self.sha1_map.insert(*rev_id, sha1);

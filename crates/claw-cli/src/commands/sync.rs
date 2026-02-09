@@ -1,7 +1,9 @@
 use clap::{Args, Subcommand};
 
+use claw_core::id::ObjectId;
 use claw_store::ClawStore;
 use claw_sync::client::SyncClient;
+use claw_sync::negotiation::find_reachable_objects;
 
 use crate::config::find_repo_root;
 
@@ -21,6 +23,9 @@ enum SyncCommand {
         /// Ref to push
         #[arg(short = 'b', long, default_value = "heads/main")]
         ref_name: String,
+        /// Force non-fast-forward push
+        #[arg(long)]
+        force: bool,
     },
     /// Pull objects from remote
     Pull {
@@ -30,6 +35,9 @@ enum SyncCommand {
         /// Ref to pull
         #[arg(short = 'b', long, default_value = "heads/main")]
         ref_name: String,
+        /// Force non-fast-forward update
+        #[arg(long)]
+        force: bool,
     },
     /// Clone a remote repository
     Clone {
@@ -46,6 +54,7 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
         SyncCommand::Push {
             remote,
             ref_name,
+            force,
         } => {
             let root = find_repo_root()?;
             let store = ClawStore::open(&root)?;
@@ -56,36 +65,75 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
                 .get_ref(&ref_name)?
                 .ok_or_else(|| anyhow::anyhow!("ref not found: {ref_name}"))?;
 
-            // Collect objects to push (simplified - just push the head object)
-            let resp = client.push_objects(&store, &[local_id]).await?;
+            // Compute reachable objects from local head
+            let reachable = find_reachable_objects(&store, &[local_id]);
+            let push_ids: Vec<ObjectId> = reachable.into_iter().collect();
+
+            // Push full closure
+            let resp = client.push_objects(&store, &push_ids).await?;
             println!("Push: {}", resp.message);
 
-            // Update remote ref
-            // In a full impl, we'd use update_refs RPC
-            println!("Pushed {} to {}", ref_name, remote);
+            // Update remote ref with CAS
+            let remote_refs = client.advertise_refs("").await?;
+            let remote_old = remote_refs
+                .iter()
+                .find(|(name, _)| name == &ref_name)
+                .map(|(_, id)| *id);
+
+            let updates = vec![(ref_name.clone(), remote_old, local_id)];
+            let ref_resp = client.update_refs(&updates, force).await?;
+
+            if ref_resp.success {
+                println!("Pushed {} to {}", ref_name, remote);
+            } else {
+                anyhow::bail!("ref update failed: {}", ref_resp.message);
+            }
         }
         SyncCommand::Pull {
             remote,
             ref_name,
+            force,
         } => {
             let root = find_repo_root()?;
             let store = ClawStore::open(&root)?;
             let mut client = SyncClient::connect(&remote).await?;
 
             let remote_refs = client.advertise_refs("").await?;
-            let want: Vec<_> = remote_refs
+            let remote_target = remote_refs
                 .iter()
-                .filter(|(name, _)| name == &ref_name)
-                .map(|(_, id)| *id)
-                .collect();
+                .find(|(name, _)| name == &ref_name)
+                .map(|(_, id)| *id);
 
-            if want.is_empty() {
-                println!("Remote ref {ref_name} not found");
-                return Ok(());
+            let remote_id = match remote_target {
+                Some(id) => id,
+                None => {
+                    println!("Remote ref {ref_name} not found");
+                    return Ok(());
+                }
+            };
+
+            // Send have set (local ref targets)
+            let local_id = store.get_ref(&ref_name)?;
+            let have: Vec<ObjectId> = local_id.into_iter().collect();
+
+            let fetched = client.fetch_objects(&store, &[remote_id], &have).await?;
+            println!("Fetched {} objects", fetched.len());
+
+            // FF check: if we have a local ref, verify it's an ancestor of the remote
+            if let Some(local) = store.get_ref(&ref_name)? {
+                let is_ff = claw_sync::ancestry::is_ancestor(&store, &local, &remote_id);
+                if !is_ff && !force {
+                    anyhow::bail!(
+                        "non-fast-forward update on {}; use --force to override",
+                        ref_name
+                    );
+                }
             }
 
-            let fetched = client.fetch_objects(&store, &want, &[]).await?;
-            println!("Fetched {} objects", fetched.len());
+            // Update local ref via CAS
+            let old = store.get_ref(&ref_name)?;
+            store.update_ref_cas(&ref_name, old.as_ref(), &remote_id, "sync", "pull")?;
+            println!("Updated {} to {}", ref_name, remote_id);
         }
         SyncCommand::Clone { remote, path } => {
             let store = ClawStore::init(std::path::Path::new(&path))?;

@@ -13,22 +13,42 @@ pub fn find_reachable_objects(store: &ClawStore, heads: &[ObjectId]) -> HashSet<
         if !visited.insert(id) {
             continue;
         }
-        if let Ok(obj) = store.load_object(&id) {
-            match obj {
-                Object::Revision(rev) => {
-                    queue.extend_from_slice(&rev.parents);
-                    if let Some(tree) = rev.tree {
-                        queue.push(tree);
-                    }
-                    queue.extend_from_slice(&rev.patches);
-                }
-                Object::Tree(tree) => {
-                    for entry in &tree.entries {
-                        queue.push(entry.object_id);
-                    }
-                }
-                _ => {}
+        let obj = match store.load_object(&id) {
+            Ok(obj) => obj,
+            Err(e) => {
+                tracing::warn!("missing object in DAG traversal: {} ({})", id, e);
+                continue;
             }
+        };
+        match obj {
+            Object::Revision(rev) => {
+                queue.extend_from_slice(&rev.parents);
+                if let Some(tree) = rev.tree {
+                    queue.push(tree);
+                }
+                queue.extend_from_slice(&rev.patches);
+            }
+            Object::Tree(tree) => {
+                for entry in &tree.entries {
+                    queue.push(entry.object_id);
+                }
+            }
+            Object::Patch(p) => {
+                if let Some(base) = p.base_object {
+                    queue.push(base);
+                }
+                if let Some(result) = p.result_object {
+                    queue.push(result);
+                }
+            }
+            Object::Snapshot(s) => {
+                queue.push(s.tree_root);
+                queue.push(s.revision_id);
+            }
+            Object::Capsule(c) => {
+                queue.push(c.revision_id);
+            }
+            _ => {}
         }
     }
 

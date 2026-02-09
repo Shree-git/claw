@@ -54,6 +54,12 @@ pub fn run(args: ShipArgs) -> anyhow::Result<()> {
     let capsule = build_capsule(&rev_id, public, None, None, &keypair)?;
     let capsule_id = store.store_object(&Object::Capsule(capsule))?;
 
+    // Add capsule reverse-mapping ref
+    store.set_ref(
+        &format!("capsules/by-revision/{}", &rev_id.to_hex()[..16]),
+        &capsule_id,
+    )?;
+
     // Update intent status to done
     let mut updated_intent = intent;
     updated_intent.status = IntentStatus::Done;

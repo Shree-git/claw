@@ -50,6 +50,14 @@ impl RepoLayout {
         self.claw_dir().join("cache")
     }
 
+    pub fn head_file(&self) -> PathBuf {
+        self.claw_dir().join("HEAD")
+    }
+
+    pub fn reflogs_dir(&self) -> PathBuf {
+        self.claw_dir().join("reflogs")
+    }
+
     pub fn create_dirs(&self) -> Result<(), StoreError> {
         std::fs::create_dir_all(self.objects_dir())?;
         std::fs::create_dir_all(self.refs_dir().join("changes"))?;
@@ -59,6 +67,7 @@ impl RepoLayout {
         std::fs::create_dir_all(self.packs_dir())?;
         std::fs::create_dir_all(self.indices_dir())?;
         std::fs::create_dir_all(self.cache_dir())?;
+        std::fs::create_dir_all(self.reflogs_dir())?;
         Ok(())
     }
 }

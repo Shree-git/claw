@@ -1,3 +1,4 @@
+pub mod ancestry;
 pub mod capsule_service;
 pub mod change_service;
 pub mod client;

@@ -72,6 +72,9 @@ bytes = "1.9"
 # Diffing
 similar = "2.6"
 
+# Glob matching
+globset = "0.4"
+
 # Testing
 proptest = "1.6"
 
