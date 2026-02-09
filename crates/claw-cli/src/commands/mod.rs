@@ -10,8 +10,12 @@ pub mod integrate;
 pub mod intent;
 pub mod log;
 pub mod patch;
+pub mod remote;
+pub mod resolve;
 pub mod ship;
+pub mod show;
 pub mod snapshot;
+pub mod status;
 pub mod sync;
 
 use clap::Subcommand;
@@ -50,6 +54,14 @@ pub enum Commands {
     Diff(diff::DiffArgs),
     /// Export to git format
     GitExport(git_export::GitExportArgs),
+    /// Show working tree status
+    Status(status::StatusArgs),
+    /// Show details of an object
+    Show(show::ShowArgs),
+    /// Manage merge conflicts
+    Resolve(resolve::ResolveArgs),
+    /// Manage remote repositories
+    Remote(remote::RemoteArgs),
 }
 
 impl Commands {
@@ -71,6 +83,10 @@ impl Commands {
             Commands::Log(args) => log::run(args),
             Commands::Diff(args) => diff::run(args),
             Commands::GitExport(args) => git_export::run(args),
+            Commands::Status(args) => status::run(args),
+            Commands::Show(args) => show::run(args),
+            Commands::Resolve(args) => resolve::run(args),
+            Commands::Remote(args) => remote::run(args),
         }
     }
 }
