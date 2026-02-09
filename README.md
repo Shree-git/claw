@@ -270,6 +270,11 @@ brew install claw
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/shree-git/claw/releases/latest/download/claw-installer.sh | sh
 ```
 
+**Manual download**
+
+Grab the latest macOS archive from [GitHub Releases](https://github.com/shree-git/claw/releases),
+extract it, and place `claw` somewhere on your `PATH` (for example `~/.local/bin`).
+
 Install to a custom location:
 
 ```bash
@@ -284,6 +289,11 @@ CLAW_HOME="$HOME/.claw" \
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/shree-git/claw/releases/latest/download/claw-installer.sh | sh
 ```
+
+**Manual download**
+
+Grab the latest Linux archive from [GitHub Releases](https://github.com/shree-git/claw/releases),
+extract it, and place `claw` somewhere on your `PATH` (for example `~/.local/bin`).
 
 Install to a custom location:
 
@@ -303,6 +313,8 @@ Notes:
 ```powershell
 winget install ShreeGit.Claw
 ```
+
+If you don't see the package yet, it's not published to WinGet for this release.
 
 **MSI (manual)**
 
