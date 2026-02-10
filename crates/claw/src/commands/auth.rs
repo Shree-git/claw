@@ -7,6 +7,8 @@ use sha2::{Digest, Sha256};
 
 use crate::auth_store::{load_auth_config, save_auth_config, AuthProfile};
 
+const CLAWLAB_OAUTH_CLIENT_ID: &str = "claw";
+
 #[derive(Args)]
 pub struct AuthArgs {
     #[command(subcommand)]
@@ -117,8 +119,9 @@ async fn login(base_url: String, profile: String, no_browser: bool) -> anyhow::R
     let redirect_uri = "urn:ietf:wg:oauth:2.0:oob";
 
     let authorize_url = format!(
-        "{}/oauth/authorize?response_type=code&client_id=claw-cli&code_challenge_method=S256&code_challenge={}&redirect_uri={}&state={}",
+        "{}/oauth/authorize?response_type=code&client_id={}&code_challenge_method=S256&code_challenge={}&redirect_uri={}&state={}",
         base_url.trim_end_matches('/'),
+        urlencoding::encode(CLAWLAB_OAUTH_CLIENT_ID),
         urlencoding::encode(&challenge),
         urlencoding::encode(redirect_uri),
         urlencoding::encode(&state)
@@ -138,7 +141,7 @@ async fn login(base_url: String, profile: String, no_browser: bool) -> anyhow::R
     let token_url = format!("{}/oauth/token", base_url.trim_end_matches('/'));
     let body = TokenRequest {
         grant_type: "authorization_code".to_string(),
-        client_id: "claw-cli".to_string(),
+        client_id: CLAWLAB_OAUTH_CLIENT_ID.to_string(),
         code,
         code_verifier: verifier,
         redirect_uri: redirect_uri.to_string(),

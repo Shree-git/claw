@@ -192,17 +192,13 @@ fn save_remotes(config_path: &Path, config: &RemotesConfig) -> anyhow::Result<()
 }
 
 fn normalize_entry(entry: RemoteEntry) -> anyhow::Result<ResolvedRemote> {
-    let kind = entry
-        .kind
-        .clone()
-        .or_else(|| {
-            if entry.base_url.is_some() || entry.repo.is_some() {
-                Some("clawlab".to_string())
-            } else {
-                Some("grpc".to_string())
-            }
-        })
-        .unwrap_or_else(|| "grpc".to_string());
+    let kind = entry.kind.clone().unwrap_or_else(|| {
+        if entry.base_url.is_some() || entry.repo.is_some() {
+            "clawlab".to_string()
+        } else {
+            "grpc".to_string()
+        }
+    });
 
     match kind.as_str() {
         "grpc" => {

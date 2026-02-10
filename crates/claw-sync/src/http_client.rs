@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use async_trait::async_trait;
 use base64::prelude::*;
 use claw_core::cof::{cof_decode, cof_encode};
@@ -134,84 +132,6 @@ struct DownloadObject {
     cof_base64: String,
 }
 
-fn object_dependency_ids(object: &Object) -> Vec<ObjectId> {
-    let mut deps = HashSet::new();
-
-    match object {
-        Object::Blob(_) | Object::Intent(_) | Object::Policy(_) | Object::Workstream(_) => {}
-        Object::Tree(tree) => {
-            for entry in &tree.entries {
-                deps.insert(entry.object_id);
-            }
-        }
-        Object::Patch(patch) => {
-            if let Some(id) = patch.base_object {
-                deps.insert(id);
-            }
-            if let Some(id) = patch.result_object {
-                deps.insert(id);
-            }
-        }
-        Object::Revision(revision) => {
-            for parent in &revision.parents {
-                deps.insert(*parent);
-            }
-            for patch in &revision.patches {
-                deps.insert(*patch);
-            }
-            if let Some(id) = revision.snapshot_base {
-                deps.insert(id);
-            }
-            if let Some(id) = revision.tree {
-                deps.insert(id);
-            }
-            if let Some(id) = revision.capsule_id {
-                deps.insert(id);
-            }
-        }
-        Object::Snapshot(snapshot) => {
-            deps.insert(snapshot.tree_root);
-            deps.insert(snapshot.revision_id);
-        }
-        Object::Change(change) => {
-            if let Some(id) = change.head_revision {
-                deps.insert(id);
-            }
-        }
-        Object::Conflict(conflict) => {
-            if let Some(id) = conflict.base_revision {
-                deps.insert(id);
-            }
-            deps.insert(conflict.left_revision);
-            deps.insert(conflict.right_revision);
-            for id in &conflict.left_patch_ids {
-                deps.insert(*id);
-            }
-            for id in &conflict.right_patch_ids {
-                deps.insert(*id);
-            }
-            for id in &conflict.resolution_patch_ids {
-                deps.insert(*id);
-            }
-        }
-        Object::Capsule(capsule) => {
-            deps.insert(capsule.revision_id);
-        }
-        Object::RefLog(reflog) => {
-            for entry in &reflog.entries {
-                if let Some(old) = entry.old_target {
-                    deps.insert(old);
-                }
-                deps.insert(entry.new_target);
-            }
-        }
-    }
-
-    let mut out: Vec<_> = deps.into_iter().collect();
-    out.sort_by_key(|id| id.to_hex());
-    out
-}
-
 #[async_trait]
 impl SyncTransport for HttpSyncClient {
     async fn hello(&mut self) -> Result<HelloResponse, SyncError> {
@@ -343,10 +263,7 @@ impl SyncTransport for HttpSyncClient {
             let payload = object.serialize_payload()?;
             let type_tag = object.type_tag();
             let cof_data = cof_encode(type_tag, &payload)?;
-            let refs = object_dependency_ids(&object)
-                .iter()
-                .map(ObjectId::to_hex)
-                .collect();
+            let refs = object.dependencies().iter().map(ObjectId::to_hex).collect();
 
             objects.push(UploadObject {
                 object_id: id.to_hex(),

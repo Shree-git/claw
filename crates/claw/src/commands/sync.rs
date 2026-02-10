@@ -13,6 +13,17 @@ use crate::worktree;
 
 use super::remote;
 
+fn require_access_token(token_profile: Option<&str>) -> anyhow::Result<String> {
+    let profile_name = token_profile.unwrap_or("default");
+    auth_store::resolve_access_token(Some(profile_name)).ok_or_else(|| {
+        anyhow::anyhow!(
+            "no token for profile '{}'; run `claw auth login --profile {}`",
+            profile_name,
+            profile_name
+        )
+    })
+}
+
 #[derive(Args)]
 pub struct SyncArgs {
     #[command(subcommand)]
@@ -76,17 +87,7 @@ async fn connect_from_remote(
             repo,
             token_profile,
         } => {
-            let profile_name = token_profile
-                .clone()
-                .unwrap_or_else(|| "default".to_string());
-            let profile_name_for_err = profile_name.clone();
-            let token = auth_store::resolve_access_token(Some(&profile_name)).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "no token for profile '{}'; run `claw auth login --profile {}`",
-                    profile_name_for_err,
-                    profile_name_for_err.clone()
-                )
-            })?;
+            let token = require_access_token(token_profile.as_deref())?;
             RemoteTransportConfig::Http {
                 base_url,
                 repo,
@@ -207,19 +208,11 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
                 "grpc" => SyncClient::connect(&remote).await?,
                 "clawlab" => {
                     let repo_slug = repo.clone().ok_or_else(|| {
-                        anyhow::anyhow!("--repo is required for --kind clawlab (example: acme-repo)")
-                    })?;
-                    let profile_name = token_profile
-                        .clone()
-                        .unwrap_or_else(|| "default".to_string());
-                    let profile_name_for_err = profile_name.clone();
-                    let token = auth_store::resolve_access_token(Some(&profile_name)).ok_or_else(|| {
                         anyhow::anyhow!(
-                            "no token for profile '{}'; run `claw auth login --profile {}`",
-                            profile_name_for_err,
-                            profile_name_for_err.clone()
+                            "--repo is required for --kind clawlab (example: acme-repo)"
                         )
                     })?;
+                    let token = require_access_token(token_profile.as_deref())?;
                     SyncClient::connect_with_transport(RemoteTransportConfig::Http {
                         base_url: remote.clone(),
                         repo: repo_slug,
@@ -272,9 +265,7 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
                 },
                 _ => remote::RemoteEntry::default(),
             };
-            remotes
-                .remotes
-                .insert("origin".to_string(), origin_entry);
+            remotes.remotes.insert("origin".to_string(), origin_entry);
             let content = toml::to_string_pretty(&remotes)?;
             std::fs::write(&config_path, content)?;
 

@@ -25,7 +25,7 @@ In the `shree-git/claw` repo, add a secret:
 
 ## Cutting a release
 
-1. Bump the version in `/Volumes/Nebulae/infinite-apps-projects/claw/Cargo.toml` (`[workspace.package].version`).
+1. Bump the version in `Cargo.toml` (`[workspace.package].version`).
 2. Commit the version bump.
 3. Create and push a git tag in the form `vX.Y.Z` (example: `v0.1.0`).
 
@@ -46,4 +46,3 @@ High-level steps:
 3. Submit the generated manifests as a PR to `microsoft/winget-pkgs`.
 
 After the first acceptance, we can automate updates on each release tag.
-

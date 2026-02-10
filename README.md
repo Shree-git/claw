@@ -254,13 +254,13 @@ need Rust/cargo to get started.
 **Homebrew (recommended)**
 
 ```bash
-brew install shree-git/tap/claw
+brew install shree-git/homebrew-tap/claw
 ```
 
 Or, if you prefer:
 
 ```bash
-brew tap shree-git/tap
+brew tap shree-git/homebrew-tap
 brew install claw
 ```
 
