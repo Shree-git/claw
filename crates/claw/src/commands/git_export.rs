@@ -37,10 +37,11 @@ pub fn run(args: GitExportArgs) -> anyhow::Result<()> {
     // Write git branch ref
     let refs_dir = git_dir.join("refs").join("heads");
     std::fs::create_dir_all(&refs_dir)?;
-    std::fs::write(
-        refs_dir.join(&args.branch),
-        format!("{}\n", hex::encode(head_sha1)),
-    )?;
+    let branch_path = refs_dir.join(&args.branch);
+    if let Some(parent) = branch_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(branch_path, format!("{}\n", hex::encode(head_sha1)))?;
 
     // Walk DAG and write change mapping refs
     write_change_refs(&store, &exporter, &rev_id, &git_dir)?;

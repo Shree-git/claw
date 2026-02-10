@@ -105,14 +105,14 @@ fn run_add(
             url: Some(url.to_string()),
             ..RemoteEntry::default()
         },
-        "clawlab" => {
-            let repo = repo.ok_or_else(|| {
-                anyhow::anyhow!("--repo is required for clawlab remotes (example: acme-repo)")
-            })?;
-            RemoteEntry {
-                kind: Some("clawlab".to_string()),
-                base_url: Some(url.to_string()),
-                repo: Some(repo),
+            "clawlab" => {
+                let repo = repo.ok_or_else(|| {
+                anyhow::anyhow!("--repo is required for clawlab remotes (example: acme/widgets)")
+                })?;
+                RemoteEntry {
+                    kind: Some("clawlab".to_string()),
+                    base_url: Some(url.to_string()),
+                    repo: Some(repo),
                 token_profile,
                 ..RemoteEntry::default()
             }
@@ -264,14 +264,14 @@ mod tests {
     }
 
     #[test]
-    fn normalize_clawlab_entry() {
-        let entry = RemoteEntry {
-            kind: Some("clawlab".to_string()),
-            base_url: Some("https://api.clawlab.com".to_string()),
-            repo: Some("acme-repo".to_string()),
+        fn normalize_clawlab_entry() {
+            let entry = RemoteEntry {
+                kind: Some("clawlab".to_string()),
+                base_url: Some("https://api.clawlab.com".to_string()),
+            repo: Some("acme/widgets".to_string()),
             token_profile: Some("default".to_string()),
-            ..RemoteEntry::default()
-        };
+                ..RemoteEntry::default()
+            };
 
         match normalize_entry(entry).unwrap() {
             ResolvedRemote::ClawLab {
@@ -280,7 +280,7 @@ mod tests {
                 token_profile,
             } => {
                 assert_eq!(base_url, "https://api.clawlab.com");
-                assert_eq!(repo, "acme-repo");
+                assert_eq!(repo, "acme/widgets");
                 assert_eq!(token_profile.as_deref(), Some("default"));
             }
             _ => panic!("expected clawlab"),
