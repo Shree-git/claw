@@ -5,11 +5,24 @@ use claw_core::object::Object;
 use claw_store::{ClawStore, HeadState};
 use claw_sync::client::SyncClient;
 use claw_sync::negotiation::find_reachable_objects;
+use claw_sync::transport::RemoteTransportConfig;
 
+use crate::auth_store;
 use crate::config::find_repo_root;
 use crate::worktree;
 
 use super::remote;
+
+fn require_access_token(token_profile: Option<&str>) -> anyhow::Result<String> {
+    let profile_name = token_profile.unwrap_or("default");
+    auth_store::resolve_access_token(Some(profile_name)).ok_or_else(|| {
+        anyhow::anyhow!(
+            "no token for profile '{}'; run `claw auth login --profile {}`",
+            profile_name,
+            profile_name
+        )
+    })
+}
 
 #[derive(Args)]
 pub struct SyncArgs {
@@ -47,10 +60,44 @@ enum SyncCommand {
     Clone {
         /// Remote address
         remote: String,
+        /// Transport kind (grpc|clawlab)
+        #[arg(long, default_value = "grpc")]
+        kind: String,
+        /// Repository slug for clawlab remotes
+        #[arg(long)]
+        repo: Option<String>,
+        /// Auth profile for clawlab remotes
+        #[arg(long)]
+        token_profile: Option<String>,
         /// Local path
         #[arg(default_value = ".")]
         path: String,
     },
+}
+
+async fn connect_from_remote(
+    root: &std::path::Path,
+    remote_arg: &str,
+) -> anyhow::Result<SyncClient> {
+    let resolved = remote::resolve_remote(root, remote_arg)?;
+    let transport = match resolved {
+        remote::ResolvedRemote::Grpc { addr } => RemoteTransportConfig::Grpc { addr },
+        remote::ResolvedRemote::ClawLab {
+            base_url,
+            repo,
+            token_profile,
+        } => {
+            let token = require_access_token(token_profile.as_deref())?;
+            RemoteTransportConfig::Http {
+                base_url,
+                repo,
+                bearer_token: Some(token),
+            }
+        }
+    };
+
+    let client = SyncClient::connect_with_transport(transport).await?;
+    Ok(client)
 }
 
 pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
@@ -61,24 +108,19 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
             force,
         } => {
             let root = find_repo_root()?;
-            let remote_url = remote::resolve_remote_url(&root, &remote)?;
             let store = ClawStore::open(&root)?;
-            let mut client = SyncClient::connect(&remote_url).await?;
+            let mut client = connect_from_remote(&root, &remote).await?;
 
-            // Get local ref
             let local_id = store
                 .get_ref(&ref_name)?
                 .ok_or_else(|| anyhow::anyhow!("ref not found: {ref_name}"))?;
 
-            // Compute reachable objects from local head
             let reachable = find_reachable_objects(&store, &[local_id]);
             let push_ids: Vec<ObjectId> = reachable.into_iter().collect();
 
-            // Push full closure
             let resp = client.push_objects(&store, &push_ids).await?;
             println!("Push: {}", resp.message);
 
-            // Update remote ref with CAS
             let remote_refs = client.advertise_refs("").await?;
             let remote_old = remote_refs
                 .iter()
@@ -100,9 +142,8 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
             force,
         } => {
             let root = find_repo_root()?;
-            let remote_url = remote::resolve_remote_url(&root, &remote)?;
             let store = ClawStore::open(&root)?;
-            let mut client = SyncClient::connect(&remote_url).await?;
+            let mut client = connect_from_remote(&root, &remote).await?;
 
             let remote_refs = client.advertise_refs("").await?;
             let remote_target = remote_refs
@@ -118,14 +159,12 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
                 }
             };
 
-            // Send have set (local ref targets)
             let local_id = store.get_ref(&ref_name)?;
             let have: Vec<ObjectId> = local_id.into_iter().collect();
 
             let fetched = client.fetch_objects(&store, &[remote_id], &have).await?;
             println!("Fetched {} objects", fetched.len());
 
-            // FF check: if we have a local ref, verify it's an ancestor of the remote
             if let Some(local) = store.get_ref(&ref_name)? {
                 let is_ff = claw_sync::ancestry::is_ancestor(&store, &local, &remote_id);
                 if !is_ff && !force {
@@ -136,12 +175,10 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
                 }
             }
 
-            // Update local ref via CAS
             let old = store.get_ref(&ref_name)?;
             store.update_ref_cas(&ref_name, old.as_ref(), &remote_id, "sync", "pull")?;
             println!("Updated {} to {}", ref_name, remote_id);
 
-            // Update working tree if the pulled ref matches HEAD's branch
             let head_state = store.read_head()?;
             if let HeadState::Symbolic {
                 ref_name: ref head_ref,
@@ -158,10 +195,33 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
                 }
             }
         }
-        SyncCommand::Clone { remote, path } => {
+        SyncCommand::Clone {
+            remote,
+            kind,
+            repo,
+            token_profile,
+            path,
+        } => {
             let root = std::path::Path::new(&path);
             let store = ClawStore::init(root)?;
-            let mut client = SyncClient::connect(&remote).await?;
+            let mut client = match kind.as_str() {
+                "grpc" => SyncClient::connect(&remote).await?,
+                "clawlab" => {
+                    let repo_slug = repo.clone().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "--repo is required for --kind clawlab (example: acme-repo)"
+                        )
+                    })?;
+                    let token = require_access_token(token_profile.as_deref())?;
+                    SyncClient::connect_with_transport(RemoteTransportConfig::Http {
+                        base_url: remote.clone(),
+                        repo: repo_slug,
+                        bearer_token: Some(token),
+                    })
+                    .await?
+                }
+                other => anyhow::bail!("unsupported --kind: {other} (expected grpc|clawlab)"),
+            };
 
             let _hello = client.hello().await?;
             let remote_refs = client.advertise_refs("").await?;
@@ -169,17 +229,14 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
             let want: Vec<_> = remote_refs.iter().map(|(_, id)| *id).collect();
             let fetched = client.fetch_objects(&store, &want, &[]).await?;
 
-            // Set local refs
             for (name, id) in &remote_refs {
                 store.set_ref(name, id)?;
             }
 
-            // Set HEAD to heads/main
             store.write_head(&HeadState::Symbolic {
                 ref_name: "heads/main".to_string(),
             })?;
 
-            // Materialize working tree from heads/main (or first available ref)
             let main_id = store.get_ref("heads/main")?;
             let checkout_id = main_id.or_else(|| remote_refs.first().map(|(_, id)| *id));
             if let Some(rev_id) = checkout_id {
@@ -191,15 +248,24 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
                 }
             }
 
-            // Store origin remote
             let config_path = root.join(".claw").join("remotes.toml");
             let mut remotes = remote::load_remotes(&config_path);
-            remotes.remotes.insert(
-                "origin".to_string(),
-                remote::RemoteEntry {
-                    url: remote.clone(),
+            let origin_entry = match kind.as_str() {
+                "grpc" => remote::RemoteEntry {
+                    kind: Some("grpc".to_string()),
+                    url: Some(remote.clone()),
+                    ..remote::RemoteEntry::default()
                 },
-            );
+                "clawlab" => remote::RemoteEntry {
+                    kind: Some("clawlab".to_string()),
+                    base_url: Some(remote.clone()),
+                    repo: repo.clone(),
+                    token_profile: token_profile.clone(),
+                    ..remote::RemoteEntry::default()
+                },
+                _ => remote::RemoteEntry::default(),
+            };
+            remotes.remotes.insert("origin".to_string(), origin_entry);
             let content = toml::to_string_pretty(&remotes)?;
             std::fs::write(&config_path, content)?;
 

@@ -17,7 +17,7 @@ pub struct ShipArgs {
     #[arg(short, long, default_value = "heads/main")]
     revision_ref: String,
     /// Agent ID
-    #[arg(short, long, default_value = "claw-cli")]
+    #[arg(short, long, default_value = "claw")]
     agent: String,
 }
 

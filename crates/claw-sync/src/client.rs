@@ -1,23 +1,91 @@
+use async_trait::async_trait;
 use claw_core::cof::{cof_decode, cof_encode};
 use claw_core::id::ObjectId;
 use claw_core::object::Object;
 use claw_store::ClawStore;
 
+use crate::http_client::HttpSyncClient;
 use crate::proto::sync::sync_service_client::SyncServiceClient;
 use crate::proto::sync::*;
+use crate::transport::{RemoteTransportConfig, SyncTransport};
 use crate::SyncError;
 
 pub struct SyncClient {
-    client: SyncServiceClient<tonic::transport::Channel>,
+    inner: Box<dyn SyncTransport>,
 }
 
 impl SyncClient {
     pub async fn connect(addr: &str) -> Result<Self, SyncError> {
-        let client = SyncServiceClient::connect(addr.to_string()).await?;
-        Ok(Self { client })
+        Self::connect_with_transport(RemoteTransportConfig::Grpc {
+            addr: addr.to_string(),
+        })
+        .await
+    }
+
+    pub async fn connect_with_transport(config: RemoteTransportConfig) -> Result<Self, SyncError> {
+        let inner: Box<dyn SyncTransport> = match config {
+            RemoteTransportConfig::Grpc { addr } => Box::new(GrpcSyncClient::connect(&addr).await?),
+            RemoteTransportConfig::Http {
+                base_url,
+                repo,
+                bearer_token,
+            } => Box::new(HttpSyncClient::new(base_url, repo, bearer_token)),
+        };
+
+        Ok(Self { inner })
     }
 
     pub async fn hello(&mut self) -> Result<HelloResponse, SyncError> {
+        self.inner.hello().await
+    }
+
+    pub async fn advertise_refs(
+        &mut self,
+        prefix: &str,
+    ) -> Result<Vec<(String, ObjectId)>, SyncError> {
+        self.inner.advertise_refs(prefix).await
+    }
+
+    pub async fn fetch_objects(
+        &mut self,
+        store: &ClawStore,
+        want: &[ObjectId],
+        have: &[ObjectId],
+    ) -> Result<Vec<ObjectId>, SyncError> {
+        self.inner.fetch_objects(store, want, have).await
+    }
+
+    pub async fn update_refs(
+        &mut self,
+        updates: &[(String, Option<ObjectId>, ObjectId)],
+        force: bool,
+    ) -> Result<UpdateRefsResponse, SyncError> {
+        self.inner.update_refs(updates, force).await
+    }
+
+    pub async fn push_objects(
+        &mut self,
+        store: &ClawStore,
+        ids: &[ObjectId],
+    ) -> Result<PushObjectsResponse, SyncError> {
+        self.inner.push_objects(store, ids).await
+    }
+}
+
+pub struct GrpcSyncClient {
+    client: SyncServiceClient<tonic::transport::Channel>,
+}
+
+impl GrpcSyncClient {
+    pub async fn connect(addr: &str) -> Result<Self, SyncError> {
+        let client = SyncServiceClient::connect(addr.to_string()).await?;
+        Ok(Self { client })
+    }
+}
+
+#[async_trait]
+impl SyncTransport for GrpcSyncClient {
+    async fn hello(&mut self) -> Result<HelloResponse, SyncError> {
         let resp = self
             .client
             .hello(HelloRequest {
@@ -28,10 +96,7 @@ impl SyncClient {
         Ok(resp.into_inner())
     }
 
-    pub async fn advertise_refs(
-        &mut self,
-        prefix: &str,
-    ) -> Result<Vec<(String, ObjectId)>, SyncError> {
+    async fn advertise_refs(&mut self, prefix: &str) -> Result<Vec<(String, ObjectId)>, SyncError> {
         let resp = self
             .client
             .advertise_refs(AdvertiseRefsRequest {
@@ -54,7 +119,7 @@ impl SyncClient {
         Ok(refs)
     }
 
-    pub async fn fetch_objects(
+    async fn fetch_objects(
         &mut self,
         store: &ClawStore,
         want: &[ObjectId],
@@ -98,7 +163,7 @@ impl SyncClient {
         Ok(fetched)
     }
 
-    pub async fn update_refs(
+    async fn update_refs(
         &mut self,
         updates: &[(String, Option<ObjectId>, ObjectId)],
         force: bool,
@@ -126,7 +191,7 @@ impl SyncClient {
         Ok(resp.into_inner())
     }
 
-    pub async fn push_objects(
+    async fn push_objects(
         &mut self,
         store: &ClawStore,
         ids: &[ObjectId],
@@ -149,7 +214,6 @@ impl SyncClient {
             });
         }
 
-        // Final marker
         chunks.push(ObjectChunk {
             id: None,
             object_type: 0,

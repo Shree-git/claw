@@ -9,7 +9,7 @@ members = [
     "crates/claw-policy",
     "crates/claw-sync",
     "crates/claw-git",
-    "crates/claw-cli",
+    "crates/claw",
     "tests/integration",
 ]
 
@@ -17,6 +17,10 @@ members = [
 edition = "2021"
 version = "0.1.0"
 license = "MIT"
+authors = ["Claw contributors"]
+description = "Intent-native, agent-native version control."
+homepage = "https://github.com/shree-git/claw"
+repository = "https://github.com/shree-git/claw"
 
 [workspace.dependencies]
 # Hashing & encoding
@@ -39,6 +43,8 @@ serde_json = "1.0"
 toml = "0.8"
 prost = "0.13"
 prost-types = "0.13"
+prost-build = "0.13"
+protoc-bin-vendored = "3.2"
 
 # gRPC
 tonic = "0.12"
@@ -47,6 +53,8 @@ tonic-build = "0.12"
 # Async
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Storage
 redb = "2.4"
@@ -58,6 +66,7 @@ ulid = { version = "1.2", features = ["serde"] }
 # CLI
 clap = { version = "4.5", features = ["derive"] }
 anyhow = "1.0"
+dirs = "5.0"
 
 # Logging
 tracing = "0.1"
@@ -68,6 +77,10 @@ thiserror = "2.0"
 
 # Bytes
 bytes = "1.9"
+base64 = "0.22"
+sha2 = "0.10"
+urlencoding = "2.1"
+webbrowser = "1.0"
 
 # Diffing
 similar = "2.6"
@@ -87,3 +100,8 @@ claw-crypto = { path = "crates/claw-crypto" }
 claw-policy = { path = "crates/claw-policy" }
 claw-sync = { path = "crates/claw-sync" }
 claw-git = { path = "crates/claw-git" }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

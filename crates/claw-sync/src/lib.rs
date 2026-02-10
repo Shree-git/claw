@@ -4,10 +4,12 @@ pub mod change_service;
 pub mod client;
 pub mod error;
 pub mod event_service;
+pub mod http_client;
 pub mod intent_service;
 pub mod negotiation;
 pub mod partial_clone;
 pub mod server;
+pub mod transport;
 pub mod workstream_service;
 
 pub mod proto {
