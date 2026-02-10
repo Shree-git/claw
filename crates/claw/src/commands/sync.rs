@@ -45,10 +45,19 @@ enum SyncCommand {
         #[arg(long)]
         force: bool,
     },
-    /// Clone a remote repository (gRPC URL)
+    /// Clone a remote repository
     Clone {
         /// Remote address
         remote: String,
+        /// Transport kind (grpc|clawlab)
+        #[arg(long, default_value = "grpc")]
+        kind: String,
+        /// Repository slug for clawlab remotes
+        #[arg(long)]
+        repo: Option<String>,
+        /// Auth profile for clawlab remotes
+        #[arg(long)]
+        token_profile: Option<String>,
         /// Local path
         #[arg(default_value = ".")]
         path: String,
@@ -185,10 +194,41 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
                 }
             }
         }
-        SyncCommand::Clone { remote, path } => {
+        SyncCommand::Clone {
+            remote,
+            kind,
+            repo,
+            token_profile,
+            path,
+        } => {
             let root = std::path::Path::new(&path);
             let store = ClawStore::init(root)?;
-            let mut client = SyncClient::connect(&remote).await?;
+            let mut client = match kind.as_str() {
+                "grpc" => SyncClient::connect(&remote).await?,
+                "clawlab" => {
+                    let repo_slug = repo.clone().ok_or_else(|| {
+                        anyhow::anyhow!("--repo is required for --kind clawlab (example: acme-repo)")
+                    })?;
+                    let profile_name = token_profile
+                        .clone()
+                        .unwrap_or_else(|| "default".to_string());
+                    let profile_name_for_err = profile_name.clone();
+                    let token = auth_store::resolve_access_token(Some(&profile_name)).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "no token for profile '{}'; run `claw auth login --profile {}`",
+                            profile_name_for_err,
+                            profile_name_for_err.clone()
+                        )
+                    })?;
+                    SyncClient::connect_with_transport(RemoteTransportConfig::Http {
+                        base_url: remote.clone(),
+                        repo: repo_slug,
+                        bearer_token: Some(token),
+                    })
+                    .await?
+                }
+                other => anyhow::bail!("unsupported --kind: {other} (expected grpc|clawlab)"),
+            };
 
             let _hello = client.hello().await?;
             let remote_refs = client.advertise_refs("").await?;
@@ -217,14 +257,24 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
 
             let config_path = root.join(".claw").join("remotes.toml");
             let mut remotes = remote::load_remotes(&config_path);
-            remotes.remotes.insert(
-                "origin".to_string(),
-                remote::RemoteEntry {
+            let origin_entry = match kind.as_str() {
+                "grpc" => remote::RemoteEntry {
                     kind: Some("grpc".to_string()),
                     url: Some(remote.clone()),
                     ..remote::RemoteEntry::default()
                 },
-            );
+                "clawlab" => remote::RemoteEntry {
+                    kind: Some("clawlab".to_string()),
+                    base_url: Some(remote.clone()),
+                    repo: repo.clone(),
+                    token_profile: token_profile.clone(),
+                    ..remote::RemoteEntry::default()
+                },
+                _ => remote::RemoteEntry::default(),
+            };
+            remotes
+                .remotes
+                .insert("origin".to_string(), origin_entry);
             let content = toml::to_string_pretty(&remotes)?;
             std::fs::write(&config_path, content)?;
 
