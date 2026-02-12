@@ -1,9 +1,10 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use base64::prelude::*;
-use claw_core::cof::{cof_decode, cof_encode};
+use claw_core::cof::{cof_decode, cof_peek_type_tag};
 use claw_core::id::ObjectId;
 use claw_core::object::{Object, TypeTag};
 use claw_store::ClawStore;
@@ -32,7 +33,78 @@ const OBJECT_BYTES_CHUNK_SIZE: usize = 4_000_000;
 const INLINE_OBJECT_MAX_BYTES: usize = 1_000_000;
 const INLINE_BATCH_MAX_BYTES: usize = 2_500_000;
 const CAP_CHUNKED_OBJECTS_V1: &str = "chunked-objects-v1";
+const CAP_PACK_UPLOAD_V1: &str = "pack-upload-v1";
+const CAP_BATCH_COMPLETE_V1: &str = "batch-complete-v1";
 const MAX_CONCURRENT_UPLOADS: usize = 8;
+const MAX_BATCH_SIZE: usize = 500;
+
+// ---------------------------------------------------------------------------
+// Prepared object: raw COF bytes read directly from disk (no decode/re-encode)
+// ---------------------------------------------------------------------------
+
+struct PreparedObject {
+    id: ObjectId,
+    hex: String,
+    type_tag: i32,
+    cof_bytes: Vec<u8>,
+}
+
+/// Read raw COF bytes from the store without the decode → re-encode cycle.
+fn prepare_objects_raw(
+    store: &ClawStore,
+    ids: &[ObjectId],
+) -> Result<Vec<PreparedObject>, SyncError> {
+    let mut prepared = Vec::with_capacity(ids.len());
+    for id in ids {
+        let cof_bytes = store.load_cof_bytes(id)?;
+        let type_tag = cof_peek_type_tag(&cof_bytes)?;
+        prepared.push(PreparedObject {
+            id: *id,
+            hex: id.to_hex(),
+            type_tag: type_tag as i32,
+            cof_bytes,
+        });
+    }
+    Ok(prepared)
+}
+
+/// Build a CLPK packfile from prepared objects.
+///
+/// Format: [4B "CLPK"][4B version=1][4B object_count][entries: 4B length, COF bytes]*
+fn build_clpk_pack(objects: &[PreparedObject]) -> Vec<u8> {
+    let total_cof: usize = objects.iter().map(|o| o.cof_bytes.len()).sum();
+    let mut data = Vec::with_capacity(12 + objects.len() * 4 + total_cof);
+
+    data.extend_from_slice(b"CLPK");
+    data.extend_from_slice(&1u32.to_le_bytes());
+    data.extend_from_slice(&(objects.len() as u32).to_le_bytes());
+
+    for obj in objects {
+        let len = obj.cof_bytes.len() as u32;
+        data.extend_from_slice(&len.to_le_bytes());
+        data.extend_from_slice(&obj.cof_bytes);
+    }
+
+    data
+}
+
+fn ids_to_proto(ids: impl IntoIterator<Item = ObjectId>) -> Vec<proto::common::ObjectId> {
+    ids.into_iter()
+        .map(|id| proto::common::ObjectId {
+            hash: id.as_bytes().to_vec(),
+        })
+        .collect()
+}
+
+fn parse_hex_ids(hexes: &[String]) -> Result<Vec<ObjectId>, SyncError> {
+    hexes
+        .iter()
+        .map(|hex| {
+            ObjectId::from_hex(hex)
+                .map_err(|e| SyncError::TransferFailed(format!("invalid object id: {e}")))
+        })
+        .collect()
+}
 
 impl HttpSyncClient {
     pub fn new(base_url: String, repo: String, bearer_token: Option<String>) -> Self {
@@ -92,15 +164,21 @@ impl HttpSyncClient {
         }
 
         let health: HealthResponse = resp.json().await?;
-        self.server_version =
-            Some(health.server_version.unwrap_or_else(|| "clawlab-http-v1".to_string()));
+        self.server_version = Some(
+            health
+                .server_version
+                .unwrap_or_else(|| "clawlab-http-v1".to_string()),
+        );
         self.capabilities_advertised = health.capabilities.is_some();
-        self.server_capabilities = health.capabilities.unwrap_or_default().into_iter().collect();
+        self.server_capabilities = health
+            .capabilities
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
 
         // Older servers may not advertise capabilities; assume a minimal baseline.
         if self.server_capabilities.is_empty() && !self.capabilities_advertised {
-            self.server_capabilities
-                .insert("partial-clone".to_string());
+            self.server_capabilities.insert("partial-clone".to_string());
             self.server_capabilities
                 .insert("polling-events".to_string());
         }
@@ -108,6 +186,10 @@ impl HttpSyncClient {
         self.health_checked = true;
         Ok(())
     }
+
+    // -----------------------------------------------------------------------
+    // Fetch helpers
+    // -----------------------------------------------------------------------
 
     async fn fetch_object_bytes(
         &self,
@@ -156,7 +238,27 @@ impl HttpSyncClient {
         Ok(out)
     }
 
+    // -----------------------------------------------------------------------
+    // Upload helpers (individual object chunked upload)
+    // -----------------------------------------------------------------------
+
+    /// Upload object data chunks and complete the upload session.
     async fn upload_object_chunks(
+        &self,
+        object_id: &str,
+        upload_id: &str,
+        cof_bytes: &[u8],
+        chunk_size: usize,
+        total_chunks: usize,
+    ) -> Result<(), SyncError> {
+        self.upload_object_data_chunks(object_id, upload_id, cof_bytes, chunk_size, total_chunks)
+            .await?;
+        self.complete_single_upload(object_id, upload_id).await
+    }
+
+    /// Upload data chunks without completing the upload session.
+    /// Used with batch-complete (Tier 3) to amortise completion overhead.
+    async fn upload_object_data_chunks(
         &self,
         object_id: &str,
         upload_id: &str,
@@ -188,14 +290,20 @@ impl HttpSyncClient {
                 let body = resp.text().await.unwrap_or_default();
                 return Err(SyncError::TransferFailed(format!(
                     "chunk upload failed for {} idx {}: {} body={}",
-                    object_id,
-                    idx,
-                    status,
-                    body
+                    object_id, idx, status, body
                 )));
             }
         }
 
+        Ok(())
+    }
+
+    /// Complete a single upload session.
+    async fn complete_single_upload(
+        &self,
+        object_id: &str,
+        upload_id: &str,
+    ) -> Result<(), SyncError> {
         let url = self.endpoint(&format!(
             "/objects/{}/uploads/{}:complete",
             urlencoding::encode(object_id),
@@ -207,23 +315,64 @@ impl HttpSyncClient {
             let body = resp.text().await.unwrap_or_default();
             return Err(SyncError::TransferFailed(format!(
                 "upload complete failed for {}: {} body={}",
-                object_id,
-                status,
-                body
+                object_id, status, body
+            )));
+        }
+        Ok(())
+    }
+
+    /// Complete multiple upload sessions in a single request (Tier 3).
+    async fn batch_complete_uploads(
+        &self,
+        entries: &[(String, String)],
+    ) -> Result<Vec<ObjectId>, SyncError> {
+        if entries.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let url = self.endpoint("/objects:batch-complete");
+        let payload = BatchCompleteRequest {
+            uploads: entries
+                .iter()
+                .map(|(oid, uid)| BatchCompleteEntry {
+                    object_id: oid.clone(),
+                    upload_id: uid.clone(),
+                })
+                .collect(),
+        };
+
+        let resp = self
+            .request(reqwest::Method::POST, url)
+            .json(&payload)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(SyncError::TransferFailed(format!(
+                "batch complete failed: {} body={}",
+                status, body
             )));
         }
 
-        Ok(())
+        let body: BatchCompleteResponse = resp.json().await?;
+        parse_hex_ids(&body.accepted)
     }
+
+    // -----------------------------------------------------------------------
+    // Batch upload + required object uploads
+    // -----------------------------------------------------------------------
 
     async fn send_upload_batch(
         &self,
         url: &str,
         batch: Vec<UploadObject>,
-        prepared_map: &std::collections::HashMap<String, Vec<u8>>,
-    ) -> Result<HashSet<ObjectId>, SyncError> {
+        prepared_map: &HashMap<String, Vec<u8>>,
+        use_batch_complete: bool,
+    ) -> Result<(HashSet<ObjectId>, Vec<(String, String)>), SyncError> {
         if batch.is_empty() {
-            return Ok(HashSet::new());
+            return Ok((HashSet::new(), Vec::new()));
         }
 
         let payload = UploadRequest { objects: batch };
@@ -238,8 +387,7 @@ impl HttpSyncClient {
             let body = resp.text().await.unwrap_or_default();
             return Err(SyncError::TransferFailed(format!(
                 "batch upload failed: {} body={}",
-                status,
-                body
+                status, body
             )));
         }
 
@@ -252,22 +400,39 @@ impl HttpSyncClient {
         }
 
         // Upload required objects concurrently.
-        let uploaded = self
-            .upload_required_objects(body.required_uploads, prepared_map)
+        let (completed_uploads, pending_completes) = self
+            .upload_required_objects(body.required_uploads, prepared_map, use_batch_complete)
             .await?;
-        accepted_ids.extend(uploaded);
+        // With batch-complete support, these uploads are only staged and are not
+        // accepted until /objects:batch-complete returns them as accepted.
+        if use_batch_complete {
+            debug_assert!(completed_uploads.is_empty());
+        } else {
+            accepted_ids.extend(completed_uploads);
+        }
 
-        Ok(accepted_ids)
+        Ok((accepted_ids, pending_completes))
     }
 
     async fn upload_required_objects(
         &self,
         required_uploads: Vec<RequiredUpload>,
-        prepared_map: &std::collections::HashMap<String, Vec<u8>>,
-    ) -> Result<Vec<ObjectId>, SyncError> {
+        prepared_map: &HashMap<String, Vec<u8>>,
+        use_batch_complete: bool,
+    ) -> Result<(Vec<ObjectId>, Vec<(String, String)>), SyncError> {
         if required_uploads.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
+
+        // Collect entries for batch-complete if supported.
+        let pending_completes: Vec<(String, String)> = if use_batch_complete {
+            required_uploads
+                .iter()
+                .map(|r| (r.object_id.clone(), r.upload_id.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_UPLOADS));
         let mut join_set = tokio::task::JoinSet::new();
@@ -285,30 +450,48 @@ impl HttpSyncClient {
 
             let client = self.clone();
             let sem = semaphore.clone();
+            let skip_complete = use_batch_complete;
 
             join_set.spawn(async move {
-                let _permit = sem.acquire().await.map_err(|_| {
-                    SyncError::TransferFailed("semaphore closed".to_string())
-                })?;
-                client
-                    .upload_object_chunks(
-                        &required.object_id,
-                        &required.upload_id,
-                        &cof,
-                        required.chunk_size,
-                        required.total_chunks,
-                    )
-                    .await?;
-                ObjectId::from_hex(&required.object_id).map_err(|e| {
-                    SyncError::TransferFailed(format!("invalid object id: {e}"))
-                })
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .map_err(|_| SyncError::TransferFailed("semaphore closed".to_string()))?;
+
+                if skip_complete {
+                    // Tier 3: upload data only; completion deferred to batch.
+                    client
+                        .upload_object_data_chunks(
+                            &required.object_id,
+                            &required.upload_id,
+                            &cof,
+                            required.chunk_size,
+                            required.total_chunks,
+                        )
+                        .await?;
+                    Ok::<Option<ObjectId>, SyncError>(None)
+                } else {
+                    client
+                        .upload_object_chunks(
+                            &required.object_id,
+                            &required.upload_id,
+                            &cof,
+                            required.chunk_size,
+                            required.total_chunks,
+                        )
+                        .await?;
+                    let id = ObjectId::from_hex(&required.object_id)
+                        .map_err(|e| SyncError::TransferFailed(format!("invalid object id: {e}")))?;
+                    Ok(Some(id))
+                }
             });
         }
 
         let mut uploaded_ids = Vec::new();
         while let Some(result) = join_set.join_next().await {
             match result {
-                Ok(Ok(id)) => uploaded_ids.push(id),
+                Ok(Ok(Some(id))) => uploaded_ids.push(id),
+                Ok(Ok(None)) => {}
                 Ok(Err(sync_err)) => return Err(sync_err),
                 Err(join_err) => {
                     return Err(SyncError::TransferFailed(format!(
@@ -318,8 +501,350 @@ impl HttpSyncClient {
             }
         }
 
-        Ok(uploaded_ids)
+        Ok((uploaded_ids, pending_completes))
     }
+
+    // -----------------------------------------------------------------------
+    // Tier 1: Pack upload – single binary CLPK payload
+    // -----------------------------------------------------------------------
+
+    async fn push_objects_pack(
+        &self,
+        store: &ClawStore,
+        ids: &[ObjectId],
+    ) -> Result<PushObjectsResponse, SyncError> {
+        let prepared = prepare_objects_raw(store, ids)?;
+        let pack_data = build_clpk_pack(&prepared);
+        let pack_size = pack_data.len();
+
+        let accepted = if pack_size <= OBJECT_BYTES_CHUNK_SIZE {
+            self.push_pack_inline(pack_data).await?
+        } else {
+            self.push_pack_chunked(pack_data).await?
+        };
+
+        Ok(PushObjectsResponse {
+            success: true,
+            message: format!("accepted {} objects (pack)", accepted.len()),
+            accepted: ids_to_proto(accepted),
+        })
+    }
+
+    /// Small pack (≤ 4 MB): single POST with binary CLPK body.
+    async fn push_pack_inline(&self, pack_data: Vec<u8>) -> Result<Vec<ObjectId>, SyncError> {
+        let url = self.endpoint("/objects:pack-upload");
+        let resp = self
+            .request(reqwest::Method::POST, url)
+            .header(reqwest::header::CONTENT_TYPE, "application/x-clpk")
+            .body(pack_data)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(SyncError::TransferFailed(format!(
+                "pack upload failed: {} body={}",
+                status, body
+            )));
+        }
+
+        let body: PackUploadResponse = resp.json().await?;
+        parse_hex_ids(&body.accepted)
+    }
+
+    /// Large pack (> 4 MB): initiate a pack upload session and stream chunks.
+    async fn push_pack_chunked(&self, pack_data: Vec<u8>) -> Result<Vec<ObjectId>, SyncError> {
+        let pack_size = pack_data.len();
+
+        // 1. Initiate pack upload session.
+        let url = self.endpoint("/objects:pack-upload");
+        let payload = PackUploadInitRequest {
+            pack_size_bytes: pack_size,
+        };
+        let resp = self
+            .request(reqwest::Method::POST, url)
+            .json(&payload)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(SyncError::TransferFailed(format!(
+                "pack upload init failed: {} body={}",
+                status, body
+            )));
+        }
+
+        let init: PackUploadInitResponse = resp.json().await?;
+        if init.chunk_size == 0 {
+            return Err(SyncError::TransferFailed(
+                "pack upload init returned invalid chunkSize=0".to_string(),
+            ));
+        }
+        let expected_total_chunks = pack_size
+            .checked_add(init.chunk_size - 1)
+            .ok_or_else(|| {
+                SyncError::TransferFailed(format!(
+                    "invalid pack upload chunk plan: overflow for pack_size={} chunk_size={}",
+                    pack_size, init.chunk_size
+                ))
+            })?
+            / init.chunk_size;
+        if init.total_chunks != expected_total_chunks {
+            return Err(SyncError::TransferFailed(format!(
+                "invalid pack upload chunk plan: totalChunks={} expected={} \
+                 (packSize={}, chunkSize={})",
+                init.total_chunks, expected_total_chunks, pack_size, init.chunk_size
+            )));
+        }
+
+        // 2. Upload chunks concurrently.
+        let pack_data = Arc::new(pack_data);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_UPLOADS));
+        let mut join_set = tokio::task::JoinSet::new();
+
+        for idx in 0..init.total_chunks {
+            let start = idx.checked_mul(init.chunk_size).ok_or_else(|| {
+                SyncError::TransferFailed(format!(
+                    "invalid pack upload chunk plan: overflow at idx={} chunkSize={}",
+                    idx, init.chunk_size
+                ))
+            })?;
+            if start >= pack_size {
+                return Err(SyncError::TransferFailed(format!(
+                    "invalid pack upload chunk plan: chunk idx {} starts at {} beyond pack size {}",
+                    idx, start, pack_size
+                )));
+            }
+            let end = std::cmp::min(start.saturating_add(init.chunk_size), pack_size);
+            if end <= start {
+                return Err(SyncError::TransferFailed(format!(
+                    "invalid pack upload chunk plan: empty chunk range for idx {}",
+                    idx
+                )));
+            }
+            let chunk = pack_data[start..end].to_vec();
+
+            let client = self.clone();
+            let upload_id = init.upload_id.clone();
+            let sem = semaphore.clone();
+
+            join_set.spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .map_err(|_| SyncError::TransferFailed("semaphore closed".to_string()))?;
+
+                let url = client.endpoint(&format!(
+                    "/objects/pack-uploads/{}/chunks/{}",
+                    urlencoding::encode(&upload_id),
+                    idx
+                ));
+                let resp = client
+                    .request(reqwest::Method::PUT, url)
+                    .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+                    .body(chunk)
+                    .send()
+                    .await?;
+
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    return Err(SyncError::TransferFailed(format!(
+                        "pack chunk upload failed idx {}: {} body={}",
+                        idx, status, body
+                    )));
+                }
+
+                Ok::<(), SyncError>(())
+            });
+        }
+
+        while let Some(result) = join_set.join_next().await {
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(sync_err)) => return Err(sync_err),
+                Err(join_err) => {
+                    return Err(SyncError::TransferFailed(format!(
+                        "pack chunk upload task panicked: {join_err}"
+                    )));
+                }
+            }
+        }
+
+        // 3. Complete pack upload.
+        let url = self.endpoint(&format!(
+            "/objects/pack-uploads/{}:complete",
+            urlencoding::encode(&init.upload_id)
+        ));
+        let resp = self.request(reqwest::Method::POST, url).send().await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(SyncError::TransferFailed(format!(
+                "pack upload complete failed: {} body={}",
+                status, body
+            )));
+        }
+
+        let body: PackUploadResponse = resp.json().await?;
+        parse_hex_ids(&body.accepted)
+    }
+
+    // -----------------------------------------------------------------------
+    // Tier 2: Hybrid inline + chunked push (replaces push_objects_chunked)
+    //
+    // Small objects (≤ 1 MB) are inlined in the batch POST via cofBase64,
+    // eliminating 2 HTTP round-trips per object (chunk PUT + complete POST).
+    // Large objects still use chunked upload sessions.
+    // A retry loop handles dependency ordering (same as legacy path).
+    // -----------------------------------------------------------------------
+
+    async fn push_objects_hybrid(
+        &self,
+        store: &ClawStore,
+        ids: &[ObjectId],
+    ) -> Result<PushObjectsResponse, SyncError> {
+        let prepared = prepare_objects_raw(store, ids)?;
+
+        let prepared_map: Arc<HashMap<String, Vec<u8>>> = Arc::new(
+            prepared
+                .iter()
+                .map(|p| (p.hex.clone(), p.cof_bytes.clone()))
+                .collect(),
+        );
+
+        let url = self.endpoint("/objects:batch-upload");
+        let all_ids: HashSet<ObjectId> = ids.iter().copied().collect();
+        let mut accepted_ids: HashSet<ObjectId> = HashSet::new();
+        let use_batch_complete = self.server_capabilities.contains(CAP_BATCH_COMPLETE_V1);
+
+        // Retry loop for dependency ordering: inline objects whose parents
+        // haven't been stored yet will be rejected and retried.
+        let mut pending = prepared;
+        const MAX_RETRIES: usize = 3;
+
+        for round in 0..=MAX_RETRIES {
+            if pending.is_empty() {
+                break;
+            }
+
+            // Build batches, inlining objects that fit.
+            let mut batches: Vec<Vec<UploadObject>> = Vec::new();
+            let mut current_batch: Vec<UploadObject> = Vec::new();
+            let mut batch_inline_bytes: usize = 0;
+
+            for obj in &pending {
+                let is_inline = obj.cof_bytes.len() <= INLINE_OBJECT_MAX_BYTES;
+                let inline_size = if is_inline { obj.cof_bytes.len() } else { 0 };
+
+                // Flush batch if limits exceeded.
+                if current_batch.len() >= MAX_BATCH_SIZE
+                    || (is_inline
+                        && batch_inline_bytes + inline_size > INLINE_BATCH_MAX_BYTES
+                        && !current_batch.is_empty())
+                {
+                    batches.push(std::mem::take(&mut current_batch));
+                    batch_inline_bytes = 0;
+                }
+
+                current_batch.push(UploadObject {
+                    object_id: obj.hex.clone(),
+                    type_tag: obj.type_tag,
+                    size_bytes: obj.cof_bytes.len(),
+                    cof_base64: if is_inline {
+                        Some(BASE64_STANDARD.encode(&obj.cof_bytes))
+                    } else {
+                        None
+                    },
+                });
+
+                if is_inline {
+                    batch_inline_bytes += inline_size;
+                }
+            }
+            if !current_batch.is_empty() {
+                batches.push(current_batch);
+            }
+
+            // Send all batches concurrently with bounded parallelism.
+            let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_UPLOADS));
+            let mut join_set = tokio::task::JoinSet::new();
+            let mut all_pending_completes: Vec<(String, String)> = Vec::new();
+
+            for batch in batches {
+                let client = self.clone();
+                let url = url.clone();
+                let map = prepared_map.clone();
+                let sem = semaphore.clone();
+                let batch_complete = use_batch_complete;
+
+                join_set.spawn(async move {
+                    let _permit = sem
+                        .acquire()
+                        .await
+                        .map_err(|_| SyncError::TransferFailed("semaphore closed".to_string()))?;
+                    client
+                        .send_upload_batch(&url, batch, &*map, batch_complete)
+                        .await
+                });
+            }
+
+            while let Some(result) = join_set.join_next().await {
+                match result {
+                    Ok(Ok((batch_accepted, pending_completes))) => {
+                        accepted_ids.extend(batch_accepted);
+                        all_pending_completes.extend(pending_completes);
+                    }
+                    Ok(Err(sync_err)) => return Err(sync_err),
+                    Err(join_err) => {
+                        return Err(SyncError::TransferFailed(format!(
+                            "batch upload task panicked: {join_err}"
+                        )));
+                    }
+                }
+            }
+
+            // Tier 3: batch-complete all pending uploads in one request.
+            if !all_pending_completes.is_empty() {
+                let batch_accepted = self
+                    .batch_complete_uploads(&all_pending_completes)
+                    .await?;
+                accepted_ids.extend(batch_accepted);
+            }
+
+            // Check if all objects are accepted.
+            if all_ids.iter().all(|id| accepted_ids.contains(id)) {
+                break;
+            }
+
+            // Re-queue unaccepted objects for retry (preserving topological order).
+            if round < MAX_RETRIES {
+                pending.retain(|obj| !accepted_ids.contains(&obj.id));
+
+                if !pending.is_empty() {
+                    tracing::debug!(
+                        "retry round {}: {} objects not yet accepted",
+                        round + 1,
+                        pending.len()
+                    );
+                }
+            }
+        }
+
+        Ok(PushObjectsResponse {
+            success: true,
+            message: format!("accepted {} objects", accepted_ids.len()),
+            accepted: ids_to_proto(accepted_ids),
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Fetch (chunked + legacy)
+    // -----------------------------------------------------------------------
 
     async fn fetch_objects_chunked(
         &mut self,
@@ -404,99 +929,6 @@ impl HttpSyncClient {
         Ok(fetched)
     }
 
-    async fn push_objects_chunked(
-        &mut self,
-        store: &ClawStore,
-        ids: &[ObjectId],
-    ) -> Result<PushObjectsResponse, SyncError> {
-        let mut prepared: Vec<(String, i32, Vec<u8>)> = Vec::new();
-
-        for id in ids {
-            let object = store.load_object(id)?;
-            let payload = object.serialize_payload()?;
-            let type_tag = object.type_tag();
-            let cof_data = cof_encode(type_tag, &payload)?;
-            prepared.push((id.to_hex(), type_tag as i32, cof_data));
-        }
-
-        let prepared_map: Arc<std::collections::HashMap<String, Vec<u8>>> = Arc::new(
-            prepared
-                .iter()
-                .map(|(hex, _, cof)| (hex.clone(), cof.clone()))
-                .collect(),
-        );
-
-        let url = self.endpoint("/objects:batch-upload");
-
-        // Build all batches upfront.
-        let mut batches: Vec<Vec<UploadObject>> = Vec::new();
-        let mut current_batch: Vec<UploadObject> = Vec::new();
-
-        for (object_id, type_tag, cof_data) in &prepared {
-            current_batch.push(UploadObject {
-                object_id: object_id.clone(),
-                type_tag: *type_tag,
-                size_bytes: cof_data.len(),
-                // In chunked transfer mode, always use upload sessions.
-                // Mixing inline + chunked objects in the same request can violate
-                // dependency ordering because inline dependency checks run before
-                // chunked completions.
-                cof_base64: None,
-            });
-
-            if current_batch.len() >= 500 {
-                batches.push(std::mem::take(&mut current_batch));
-            }
-        }
-        if !current_batch.is_empty() {
-            batches.push(current_batch);
-        }
-
-        // Send all batches concurrently with bounded parallelism.
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_UPLOADS));
-        let mut join_set = tokio::task::JoinSet::new();
-
-        for batch in batches {
-            let client = self.clone();
-            let url = url.clone();
-            let map = prepared_map.clone();
-            let sem = semaphore.clone();
-
-            join_set.spawn(async move {
-                let _permit = sem.acquire().await.map_err(|_| {
-                    SyncError::TransferFailed("semaphore closed".to_string())
-                })?;
-                client.send_upload_batch(&url, batch, &*map).await
-            });
-        }
-
-        let mut accepted_ids: HashSet<ObjectId> = HashSet::new();
-        while let Some(result) = join_set.join_next().await {
-            match result {
-                Ok(Ok(batch_accepted)) => accepted_ids.extend(batch_accepted),
-                Ok(Err(sync_err)) => return Err(sync_err),
-                Err(join_err) => {
-                    return Err(SyncError::TransferFailed(format!(
-                        "batch upload task panicked: {join_err}"
-                    )));
-                }
-            }
-        }
-
-        let accepted: Vec<_> = accepted_ids
-            .into_iter()
-            .map(|id| proto::common::ObjectId {
-                hash: id.as_bytes().to_vec(),
-            })
-            .collect();
-
-        Ok(PushObjectsResponse {
-            success: true,
-            message: format!("accepted {} objects", ids.len()),
-            accepted,
-        })
-    }
-
     async fn fetch_objects_legacy(
         &mut self,
         store: &ClawStore,
@@ -539,9 +971,9 @@ impl HttpSyncClient {
                 ))
             })?;
 
-            let cof_bytes = BASE64_STANDARD
-                .decode(item.cof_base64)
-                .map_err(|e| SyncError::TransferFailed(format!("invalid cofBase64 for {object_id}: {e}")))?;
+            let cof_bytes = BASE64_STANDARD.decode(item.cof_base64).map_err(|e| {
+                SyncError::TransferFailed(format!("invalid cofBase64 for {object_id}: {e}"))
+            })?;
 
             let (type_tag, payload) = cof_decode(&cof_bytes)?;
             if type_tag != expected_type {
@@ -569,25 +1001,21 @@ impl HttpSyncClient {
         Ok(fetched)
     }
 
+    // -----------------------------------------------------------------------
+    // Legacy push (inline-only, for servers without chunked-objects-v1)
+    // -----------------------------------------------------------------------
+
     async fn push_objects_legacy(
-        &mut self,
+        &self,
         store: &ClawStore,
         ids: &[ObjectId],
     ) -> Result<PushObjectsResponse, SyncError> {
-        let mut prepared: Vec<(String, i32, Vec<u8>)> = Vec::new();
+        let prepared = prepare_objects_raw(store, ids)?;
 
-        for id in ids {
-            let object = store.load_object(id)?;
-            let payload = object.serialize_payload()?;
-            let type_tag = object.type_tag();
-            let cof_data = cof_encode(type_tag, &payload)?;
-            prepared.push((id.to_hex(), type_tag as i32, cof_data));
-        }
-
-        let prepared_map: Arc<std::collections::HashMap<String, Vec<u8>>> = Arc::new(
+        let prepared_map: Arc<HashMap<String, Vec<u8>>> = Arc::new(
             prepared
                 .iter()
-                .map(|(hex, _, cof)| (hex.clone(), cof.clone()))
+                .map(|p| (p.hex.clone(), p.cof_bytes.clone()))
                 .collect(),
         );
 
@@ -606,12 +1034,13 @@ impl HttpSyncClient {
                 break;
             }
 
-            for (object_id, _, cof_data) in &pending {
-                if cof_data.len() > INLINE_OBJECT_MAX_BYTES {
+            for obj in &pending {
+                if obj.cof_bytes.len() > INLINE_OBJECT_MAX_BYTES {
                     return Err(SyncError::TransferFailed(format!(
                         "server does not advertise {CAP_CHUNKED_OBJECTS_V1}; \
-                         cannot push large object {object_id} ({} bytes)",
-                        cof_data.len()
+                         cannot push large object {} ({} bytes)",
+                        obj.hex,
+                        obj.cof_bytes.len()
                     )));
                 }
             }
@@ -621,19 +1050,21 @@ impl HttpSyncClient {
             let mut current_batch: Vec<UploadObject> = Vec::new();
             let mut inline_bytes: usize = 0;
 
-            for (object_id, type_tag, cof_data) in &pending {
-                let size = cof_data.len();
+            for obj in &pending {
+                let size = obj.cof_bytes.len();
 
-                if inline_bytes + size > INLINE_BATCH_MAX_BYTES || current_batch.len() >= 500 {
+                if inline_bytes + size > INLINE_BATCH_MAX_BYTES
+                    || current_batch.len() >= MAX_BATCH_SIZE
+                {
                     batches.push(std::mem::take(&mut current_batch));
                     inline_bytes = 0;
                 }
 
                 current_batch.push(UploadObject {
-                    object_id: object_id.clone(),
-                    type_tag: *type_tag,
+                    object_id: obj.hex.clone(),
+                    type_tag: obj.type_tag,
                     size_bytes: size,
-                    cof_base64: Some(BASE64_STANDARD.encode(cof_data)),
+                    cof_base64: Some(BASE64_STANDARD.encode(&obj.cof_bytes)),
                 });
                 inline_bytes += size;
             }
@@ -652,16 +1083,19 @@ impl HttpSyncClient {
                 let sem = semaphore.clone();
 
                 join_set.spawn(async move {
-                    let _permit = sem.acquire().await.map_err(|_| {
-                        SyncError::TransferFailed("semaphore closed".to_string())
-                    })?;
-                    client.send_upload_batch(&url, batch, &*map).await
+                    let _permit = sem
+                        .acquire()
+                        .await
+                        .map_err(|_| SyncError::TransferFailed("semaphore closed".to_string()))?;
+                    client
+                        .send_upload_batch(&url, batch, &*map, false)
+                        .await
                 });
             }
 
             while let Some(result) = join_set.join_next().await {
                 match result {
-                    Ok(Ok(batch_accepted)) => accepted_ids.extend(batch_accepted),
+                    Ok(Ok((batch_accepted, _))) => accepted_ids.extend(batch_accepted),
                     Ok(Err(sync_err)) => return Err(sync_err),
                     Err(join_err) => {
                         return Err(SyncError::TransferFailed(format!(
@@ -678,14 +1112,7 @@ impl HttpSyncClient {
 
             // Re-queue unaccepted objects for retry (preserving topological order).
             if round < MAX_RETRIES {
-                pending = pending
-                    .into_iter()
-                    .filter(|(hex, _, _)| {
-                        ObjectId::from_hex(hex)
-                            .map(|id| !accepted_ids.contains(&id))
-                            .unwrap_or(false)
-                    })
-                    .collect();
+                pending.retain(|obj| !accepted_ids.contains(&obj.id));
 
                 if !pending.is_empty() {
                     tracing::debug!(
@@ -697,20 +1124,17 @@ impl HttpSyncClient {
             }
         }
 
-        let accepted: Vec<_> = accepted_ids
-            .into_iter()
-            .map(|id| proto::common::ObjectId {
-                hash: id.as_bytes().to_vec(),
-            })
-            .collect();
-
         Ok(PushObjectsResponse {
             success: true,
-            message: format!("accepted {} objects", accepted.len()),
-            accepted,
+            message: format!("accepted {} objects", accepted_ids.len()),
+            accepted: ids_to_proto(accepted_ids),
         })
     }
 }
+
+// ---------------------------------------------------------------------------
+// Serde types
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
 struct HealthResponse {
@@ -751,6 +1175,8 @@ struct CasUpdateResponse {
     message: String,
 }
 
+// Batch upload (existing)
+
 #[derive(Debug, Serialize)]
 struct UploadObject {
     #[serde(rename = "objectId")]
@@ -786,6 +1212,51 @@ struct RequiredUpload {
     #[serde(rename = "totalChunks")]
     total_chunks: usize,
 }
+
+// Pack upload (Tier 1)
+
+#[derive(Debug, Serialize)]
+struct PackUploadInitRequest {
+    #[serde(rename = "packSizeBytes")]
+    pack_size_bytes: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct PackUploadInitResponse {
+    #[serde(rename = "uploadId")]
+    upload_id: String,
+    #[serde(rename = "chunkSize")]
+    chunk_size: usize,
+    #[serde(rename = "totalChunks")]
+    total_chunks: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct PackUploadResponse {
+    accepted: Vec<String>,
+}
+
+// Batch complete (Tier 3)
+
+#[derive(Debug, Serialize)]
+struct BatchCompleteRequest {
+    uploads: Vec<BatchCompleteEntry>,
+}
+
+#[derive(Debug, Serialize)]
+struct BatchCompleteEntry {
+    #[serde(rename = "objectId")]
+    object_id: String,
+    #[serde(rename = "uploadId")]
+    upload_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct BatchCompleteResponse {
+    accepted: Vec<String>,
+}
+
+// Download
 
 #[derive(Debug, Serialize)]
 struct DownloadRequest {
@@ -828,6 +1299,10 @@ struct LegacyDownloadObject {
     #[serde(rename = "cofBase64")]
     cof_base64: String,
 }
+
+// ---------------------------------------------------------------------------
+// SyncTransport impl
+// ---------------------------------------------------------------------------
 
 #[async_trait]
 impl SyncTransport for HttpSyncClient {
@@ -936,20 +1411,30 @@ impl SyncTransport for HttpSyncClient {
     ) -> Result<PushObjectsResponse, SyncError> {
         self.ensure_health().await?;
 
+        // Strategy 1: Pack upload (Tier 1) – single binary payload, fewest HTTP
+        // requests. The server unpacks the CLPK and stores all objects at once.
+        if self.server_capabilities.contains(CAP_PACK_UPLOAD_V1) {
+            return self.push_objects_pack(store, ids).await;
+        }
+
+        // Strategy 2: Hybrid inline + chunked (Tier 2) – inline small objects
+        // to avoid 2 extra HTTP round-trips per object, with chunked upload
+        // for large objects and optional batch-complete (Tier 3).
         if self.capabilities_advertised
-            && !self.server_capabilities.contains(CAP_CHUNKED_OBJECTS_V1)
+            && self.server_capabilities.contains(CAP_CHUNKED_OBJECTS_V1)
         {
+            return self.push_objects_hybrid(store, ids).await;
+        }
+
+        // Strategy 3: Legacy inline-only for old servers.
+        if self.capabilities_advertised {
             return self.push_objects_legacy(store, ids).await;
         }
 
-        match self.push_objects_chunked(store, ids).await {
+        // Unknown capabilities: try hybrid, fall back to legacy.
+        match self.push_objects_hybrid(store, ids).await {
             Ok(result) => Ok(result),
-            Err(err) => {
-                if self.capabilities_advertised {
-                    return Err(err);
-                }
-                self.push_objects_legacy(store, ids).await
-            }
+            Err(_) => self.push_objects_legacy(store, ids).await,
         }
     }
 }
