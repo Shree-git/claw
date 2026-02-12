@@ -202,6 +202,22 @@ pub fn cof_decode(data: &[u8]) -> Result<(TypeTag, Vec<u8>), CoreError> {
     Ok((type_tag, payload))
 }
 
+/// Peek at the type tag from COF-encoded data without fully decoding.
+///
+/// This is useful when the raw COF bytes will be forwarded over the wire
+/// (e.g., pack uploads) and only the type tag is needed for metadata.
+pub fn cof_peek_type_tag(data: &[u8]) -> Result<TypeTag, CoreError> {
+    if data.len() < 8 {
+        return Err(CoreError::Deserialization(
+            "data too short for COF header".into(),
+        ));
+    }
+    if &data[..4] != MAGIC {
+        return Err(CoreError::InvalidMagic);
+    }
+    TypeTag::from_u8(data[5]).ok_or(CoreError::UnknownTypeTag(data[5]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,5 +267,30 @@ mod tests {
             assert_eq!(decoded_tag, tag);
             assert_eq!(decoded_payload, payload.as_bytes());
         }
+    }
+
+    #[test]
+    fn peek_type_tag_matches_decode() {
+        for tag_val in 0x01..=0x0Cu8 {
+            let tag = TypeTag::from_u8(tag_val).unwrap();
+            let encoded = cof_encode(tag, b"hello world").unwrap();
+            let peeked = cof_peek_type_tag(&encoded).unwrap();
+            assert_eq!(peeked, tag);
+        }
+    }
+
+    #[test]
+    fn peek_type_tag_rejects_short_data() {
+        assert!(cof_peek_type_tag(&[0; 4]).is_err());
+    }
+
+    #[test]
+    fn peek_type_tag_rejects_bad_magic() {
+        let mut data = cof_encode(TypeTag::Blob, b"test").unwrap();
+        data[0] = b'X';
+        assert!(matches!(
+            cof_peek_type_tag(&data),
+            Err(CoreError::InvalidMagic)
+        ));
     }
 }
