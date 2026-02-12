@@ -1,4 +1,5 @@
 use clap::Args;
+use std::path::{Component, Path};
 
 use claw_core::id::ObjectId;
 use claw_core::object::Object;
@@ -20,6 +21,30 @@ pub struct GitExportArgs {
     git_dir: String,
 }
 
+fn validate_git_branch_path(branch: &str) -> anyhow::Result<()> {
+    let path = Path::new(branch);
+    if path.is_absolute() {
+        anyhow::bail!("invalid branch name '{}': must be relative", branch);
+    }
+
+    for component in path.components() {
+        match component {
+            Component::Normal(_) => {}
+            Component::CurDir
+            | Component::ParentDir
+            | Component::RootDir
+            | Component::Prefix(_) => {
+                anyhow::bail!(
+                    "invalid branch name '{}': cannot contain '.', '..', or root components",
+                    branch
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub fn run(args: GitExportArgs) -> anyhow::Result<()> {
     let root = find_repo_root()?;
     let store = ClawStore::open(&root)?;
@@ -35,6 +60,7 @@ pub fn run(args: GitExportArgs) -> anyhow::Result<()> {
     let head_sha1 = exporter.export(&rev_id, &git_objects_dir)?;
 
     // Write git branch ref
+    validate_git_branch_path(&args.branch)?;
     let refs_dir = git_dir.join("refs").join("heads");
     std::fs::create_dir_all(&refs_dir)?;
     let branch_path = refs_dir.join(&args.branch);
@@ -81,4 +107,22 @@ fn write_change_refs(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_git_branch_path;
+
+    #[test]
+    fn allows_relative_branch_paths() {
+        assert!(validate_git_branch_path("main").is_ok());
+        assert!(validate_git_branch_path("claw/main").is_ok());
+    }
+
+    #[test]
+    fn rejects_parent_and_root_components() {
+        assert!(validate_git_branch_path("../outside").is_err());
+        assert!(validate_git_branch_path("claw/../outside").is_err());
+        assert!(validate_git_branch_path("/absolute").is_err());
+    }
 }
