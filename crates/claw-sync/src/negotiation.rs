@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
 use claw_core::id::ObjectId;
-use claw_core::object::Object;
 use claw_store::ClawStore;
 
 /// Walk the revision DAG from `heads` to find all reachable objects.
@@ -20,39 +19,61 @@ pub fn find_reachable_objects(store: &ClawStore, heads: &[ObjectId]) -> HashSet<
                 continue;
             }
         };
-        match obj {
-            Object::Revision(rev) => {
-                queue.extend_from_slice(&rev.parents);
-                if let Some(tree) = rev.tree {
-                    queue.push(tree);
-                }
-                queue.extend_from_slice(&rev.patches);
-            }
-            Object::Tree(tree) => {
-                for entry in &tree.entries {
-                    queue.push(entry.object_id);
-                }
-            }
-            Object::Patch(p) => {
-                if let Some(base) = p.base_object {
-                    queue.push(base);
-                }
-                if let Some(result) = p.result_object {
-                    queue.push(result);
-                }
-            }
-            Object::Snapshot(s) => {
-                queue.push(s.tree_root);
-                queue.push(s.revision_id);
-            }
-            Object::Capsule(c) => {
-                queue.push(c.revision_id);
-            }
-            _ => {}
-        }
+        queue.extend(obj.dependencies());
     }
 
     visited
+}
+
+fn visit_ordered(
+    store: &ClawStore,
+    id: ObjectId,
+    visiting: &mut HashSet<ObjectId>,
+    visited: &mut HashSet<ObjectId>,
+    out: &mut Vec<ObjectId>,
+) {
+    if visited.contains(&id) {
+        return;
+    }
+    if !visiting.insert(id) {
+        // Defensive cycle guard; object graphs should be acyclic for dependency links.
+        tracing::warn!("cycle detected in object dependency traversal at {}", id);
+        return;
+    }
+
+    let obj = match store.load_object(&id) {
+        Ok(obj) => obj,
+        Err(e) => {
+            tracing::warn!("missing object in dependency traversal: {} ({})", id, e);
+            visiting.remove(&id);
+            return;
+        }
+    };
+
+    for dep in obj.dependencies() {
+        visit_ordered(store, dep, visiting, visited, out);
+    }
+
+    visiting.remove(&id);
+    if visited.insert(id) {
+        out.push(id);
+    }
+}
+
+/// Walk the dependency graph from `heads` and return object ids in dependency-first order.
+///
+/// This ordering is required by transports that validate referenced objects on each insert
+/// (for example, ClawLab HTTP object upload), where children must not be sent before parents.
+pub fn ordered_reachable_objects(store: &ClawStore, heads: &[ObjectId]) -> Vec<ObjectId> {
+    let mut visiting = HashSet::new();
+    let mut visited = HashSet::new();
+    let mut out = Vec::new();
+
+    for id in heads {
+        visit_ordered(store, *id, &mut visiting, &mut visited, &mut out);
+    }
+
+    out
 }
 
 /// Compute the objects we need to send (have but remote doesn't).

@@ -4,7 +4,7 @@ use claw_core::id::ObjectId;
 use claw_core::object::Object;
 use claw_store::{ClawStore, HeadState};
 use claw_sync::client::SyncClient;
-use claw_sync::negotiation::find_reachable_objects;
+use claw_sync::negotiation::ordered_reachable_objects;
 use claw_sync::transport::RemoteTransportConfig;
 
 use crate::auth_store;
@@ -115,8 +115,7 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
                 .get_ref(&ref_name)?
                 .ok_or_else(|| anyhow::anyhow!("ref not found: {ref_name}"))?;
 
-            let reachable = find_reachable_objects(&store, &[local_id]);
-            let push_ids: Vec<ObjectId> = reachable.into_iter().collect();
+            let push_ids: Vec<ObjectId> = ordered_reachable_objects(&store, &[local_id]);
 
             let resp = client.push_objects(&store, &push_ids).await?;
             println!("Push: {}", resp.message);

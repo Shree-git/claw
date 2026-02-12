@@ -7,7 +7,8 @@ use sha2::{Digest, Sha256};
 
 use crate::auth_store::{load_auth_config, save_auth_config, AuthProfile};
 
-const CLAWLAB_OAUTH_CLIENT_ID: &str = "claw";
+// ClawLab v1 only allows this single public client id.
+const CLAWLAB_OAUTH_CLIENT_ID: &str = "claw-cli";
 
 #[derive(Args)]
 pub struct AuthArgs {
