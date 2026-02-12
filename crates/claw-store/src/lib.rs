@@ -84,6 +84,14 @@ impl ClawStore {
         Ok(obj)
     }
 
+    /// Read the raw COF-encoded bytes for an object without decoding.
+    ///
+    /// This avoids the decode → re-encode cycle when the COF bytes will be
+    /// sent over the wire unmodified (e.g., pack uploads, inline batch uploads).
+    pub fn load_cof_bytes(&self, id: &ObjectId) -> Result<Vec<u8>, StoreError> {
+        loose::read_loose_object(&self.layout, id)
+    }
+
     pub fn has_object(&self, id: &ObjectId) -> bool {
         loose::loose_object_path(&self.layout, id).exists()
     }
