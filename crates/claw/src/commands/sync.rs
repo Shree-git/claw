@@ -205,15 +205,15 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
             let store = ClawStore::init(root)?;
             let mut client = match kind.as_str() {
                 "grpc" => SyncClient::connect(&remote).await?,
-                    "clawlab" => {
-                        let repo_slug = repo.clone().ok_or_else(|| {
-                            anyhow::anyhow!(
+                "clawlab" => {
+                    let repo_slug = repo.clone().ok_or_else(|| {
+                        anyhow::anyhow!(
                             "--repo is required for --kind clawlab (example: acme/widgets)"
-                            )
-                        })?;
-                        let token = require_access_token(token_profile.as_deref())?;
-                        SyncClient::connect_with_transport(RemoteTransportConfig::Http {
-                            base_url: remote.clone(),
+                        )
+                    })?;
+                    let token = require_access_token(token_profile.as_deref())?;
+                    SyncClient::connect_with_transport(RemoteTransportConfig::Http {
+                        base_url: remote.clone(),
                         repo: repo_slug,
                         bearer_token: Some(token),
                     })
