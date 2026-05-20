@@ -12,7 +12,7 @@ body:
     attributes:
       label: Claw version
       description: Paste the output of `claw --version`.
-      placeholder: "claw 0.1.0"
+      placeholder: "claw 0.1.2-beta.1"
     validations:
       required: true
   - type: dropdown

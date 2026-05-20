@@ -5,7 +5,7 @@ RUN apk add --no-cache musl-dev pkgconfig openssl-dev
 COPY . .
 RUN cargo build --release -p claw-vcs --locked
 
-FROM alpine:3.21
+FROM alpine:3.23
 RUN addgroup -S claw -g 10001 && adduser -S claw -u 10001 -G claw
 WORKDIR /var/lib/claw/repo
 

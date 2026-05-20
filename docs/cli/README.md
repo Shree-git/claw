@@ -8,7 +8,7 @@ Use `claw version` for human output:
 
 ```console
 $ claw version
-claw 0.1.0
+claw 0.1.2-beta.1
 ```
 
 Use `claw version --json` for scripts. The JSON shape includes `name`, `version`, `package`, optional `git_sha`, `object_format_version`, `sync_protocol_version`, `sync_capabilities`, `build`, `os`, and `arch`.

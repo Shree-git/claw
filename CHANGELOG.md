@@ -3,7 +3,18 @@
 All public launch notes for Claw VCS live here from the `v0.1.x` line onward.
 Earlier build details may appear in GitHub Releases.
 
-## Unreleased
+## v0.1.2-beta.1
+
+### Fixed
+
+- Made integration daemon test harnesses reserve distinct gRPC and health
+  listener ports to prevent soak-test address reuse flakes.
+- Rejected daemon startup when `--listen` and `--health-listen` resolve to the
+  same socket address.
+- Generated mTLS test CA certificates with an explicit OpenSSL config so macOS
+  compatibility tests work across OpenSSL 1.1 and 3.x.
+
+## v0.1.1
 
 ### Added
 
