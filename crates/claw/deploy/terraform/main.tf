@@ -4,13 +4,13 @@ terraform {
   required_providers {
     helm = {
       source  = "hashicorp/helm"
-      version = "~> 2.13"
+      version = "~> 3.1"
     }
   }
 }
 
 provider "helm" {
-  kubernetes {
+  kubernetes = {
     config_path = var.kubeconfig_path
   }
 }
@@ -24,13 +24,14 @@ resource "helm_release" "claw" {
 
   values = [for f in var.values_files : file(f)]
 
-  set {
-    name  = "image.repository"
-    value = var.image_repository
-  }
-
-  set {
-    name  = "image.tag"
-    value = var.image_tag
-  }
+  set = [
+    {
+      name  = "image.repository"
+      value = var.image_repository
+    },
+    {
+      name  = "image.tag"
+      value = var.image_tag
+    }
+  ]
 }
