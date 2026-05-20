@@ -1,4 +1,4 @@
-FROM rust:1.86-alpine AS builder
+FROM rust:1.95-alpine AS builder
 WORKDIR /src
 RUN apk add --no-cache musl-dev pkgconfig openssl-dev
 
