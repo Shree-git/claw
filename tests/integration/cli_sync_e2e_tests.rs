@@ -348,6 +348,7 @@ fn generate_tls_fixture() -> Option<TlsFixture> {
     let dir = tempfile::tempdir().expect("create TLS fixture temp dir");
     let ca_key = dir.path().join("ca.key");
     let ca_cert = dir.path().join("ca.crt");
+    let ca_config = dir.path().join("ca.cnf");
     let server_key = dir.path().join("server.key");
     let server_csr = dir.path().join("server.csr");
     let server_cert = dir.path().join("server.crt");
@@ -356,6 +357,25 @@ fn generate_tls_fixture() -> Option<TlsFixture> {
     let client_csr = dir.path().join("client.csr");
     let client_cert = dir.path().join("client.crt");
     let client_config = dir.path().join("client.cnf");
+
+    fs::write(
+        &ca_config,
+        r#"[req]
+distinguished_name = dn
+prompt = no
+x509_extensions = v3_ca
+
+[dn]
+CN = Claw Test CA
+
+[v3_ca]
+basicConstraints = critical, CA:TRUE
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+"#,
+    )
+    .expect("write CA openssl config");
 
     fs::write(
         &server_config,
@@ -409,10 +429,8 @@ extendedKeyUsage = clientAuth
             "-sha256".into(),
             "-days".into(),
             "2".into(),
-            "-subj".into(),
-            "/CN=Claw Test CA".into(),
-            "-addext".into(),
-            "basicConstraints=critical,CA:TRUE".into(),
+            "-config".into(),
+            ca_config.as_os_str().to_os_string(),
             "-keyout".into(),
             ca_key.as_os_str().to_os_string(),
             "-out".into(),

@@ -22,7 +22,7 @@ This page defines the current compatibility baseline for operators running contr
 
 ## Wire/service compatibility
 
-- Daemon sync `Hello` reports `server_version: 0.1.0`.
+- Daemon sync `Hello` reports `server_version: 0.1.2-beta.1`.
 - Current sync protocol identifier: `claw-sync/1`.
 - Current object format: COF v1.
 - `claw-core` exposes COF version classification and migration-plan helpers.

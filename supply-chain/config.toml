@@ -7,6 +7,33 @@ version = "0.10"
 [imports.mozilla]
 url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 
+[policy.claw-vcs]
+audit-as-crates-io = false
+
+[policy.claw-vcs-core]
+audit-as-crates-io = false
+
+[policy.claw-vcs-crypto]
+audit-as-crates-io = false
+
+[policy.claw-vcs-git]
+audit-as-crates-io = false
+
+[policy.claw-vcs-merge]
+audit-as-crates-io = false
+
+[policy.claw-vcs-patch]
+audit-as-crates-io = false
+
+[policy.claw-vcs-policy]
+audit-as-crates-io = false
+
+[policy.claw-vcs-store]
+audit-as-crates-io = false
+
+[policy.claw-vcs-sync]
+audit-as-crates-io = false
+
 [[exemptions.adler2]]
 version = "2.0.1"
 criteria = "safe-to-deploy"

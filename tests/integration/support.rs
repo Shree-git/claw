@@ -14,6 +14,7 @@ use serde_json::Value;
 use tempfile::TempDir;
 
 static CLAW_BINARY: OnceLock<PathBuf> = OnceLock::new();
+const DAEMON_SPAWN_ATTEMPTS: usize = 5;
 
 pub struct CliTestEnv {
     root: TempDir,
@@ -119,44 +120,58 @@ impl CliTestEnv {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let grpc_addr = reserve_local_addr();
-        let health_addr = reserve_local_addr();
-        let stdout_log = self
-            .temp_root()
-            .join(format!("daemon-{}.stdout.log", random_suffix()));
-        let stderr_log = self
-            .temp_root()
-            .join(format!("daemon-{}.stderr.log", random_suffix()));
-        let stdout = File::create(&stdout_log).expect("create daemon stdout log");
-        let stderr = File::create(&stderr_log).expect("create daemon stderr log");
+        let extra_args = render_args(extra_args);
+        let mut last_error = String::new();
 
-        let mut command = Command::new(claw_binary());
-        command
-            .current_dir(repo)
-            .arg("daemon")
-            .arg("--listen")
-            .arg(&grpc_addr)
-            .arg("--health-listen")
-            .arg(&health_addr)
-            .stdout(Stdio::from(stdout))
-            .stderr(Stdio::from(stderr));
+        for attempt in 1..=DAEMON_SPAWN_ATTEMPTS {
+            let (grpc_addr, health_addr) = reserve_distinct_local_addrs();
+            let stdout_log = self
+                .temp_root()
+                .join(format!("daemon-{}.stdout.log", random_suffix()));
+            let stderr_log = self
+                .temp_root()
+                .join(format!("daemon-{}.stderr.log", random_suffix()));
+            let stdout = File::create(&stdout_log).expect("create daemon stdout log");
+            let stderr = File::create(&stderr_log).expect("create daemon stderr log");
 
-        apply_isolated_env(&mut command, &self.home_dir);
-        for arg in extra_args {
-            command.arg(arg);
+            let mut command = Command::new(claw_binary());
+            command
+                .current_dir(repo)
+                .arg("daemon")
+                .arg("--listen")
+                .arg(&grpc_addr)
+                .arg("--health-listen")
+                .arg(&health_addr)
+                .stdout(Stdio::from(stdout))
+                .stderr(Stdio::from(stderr));
+
+            apply_isolated_env(&mut command, &self.home_dir);
+            for arg in &extra_args {
+                command.arg(arg);
+            }
+
+            let child = command.spawn().expect("spawn claw daemon");
+            let mut daemon = RunningDaemon {
+                child,
+                stdout_log,
+                stderr_log,
+                grpc_endpoint: format!("http://{grpc_addr}"),
+                health_addr,
+            };
+
+            match daemon.wait_until_ready() {
+                Ok(()) => return daemon,
+                Err(err)
+                    if output_indicates_addr_in_use(&err) && attempt < DAEMON_SPAWN_ATTEMPTS =>
+                {
+                    last_error = err;
+                    thread::sleep(Duration::from_millis(50 * attempt as u64));
+                }
+                Err(err) => panic!("{err}"),
+            }
         }
 
-        let child = command.spawn().expect("spawn claw daemon");
-        let mut daemon = RunningDaemon {
-            child,
-            stdout_log,
-            stderr_log,
-            grpc_endpoint: format!("http://{grpc_addr}"),
-            health_addr,
-        };
-
-        daemon.wait_until_ready();
-        daemon
+        panic!("daemon did not become ready after address retries: {last_error}");
     }
 
     fn run<I, S>(&self, cwd: &Path, args: I) -> CommandResult
@@ -213,29 +228,31 @@ impl RunningDaemon {
         fs::read_to_string(&self.stderr_log).unwrap_or_default()
     }
 
-    fn wait_until_ready(&mut self) {
+    fn wait_until_ready(&mut self) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             if let Some(status) = self.child_exit_status() {
-                panic!(
+                return Err(format!(
                     "daemon exited early: {status}\nstdout:\n{}\nstderr:\n{}",
                     self.stdout_log(),
                     self.stderr_log()
-                );
+                ));
             }
 
             if let Ok(response) = try_http_get(&self.health_addr, "/v1/health/ready") {
                 if response.status_code == 200 {
-                    return;
+                    return Ok(());
                 }
             }
 
             if Instant::now() >= deadline {
-                panic!(
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                return Err(format!(
                     "daemon did not become ready in time\nstdout:\n{}\nstderr:\n{}",
                     self.stdout_log(),
                     self.stderr_log()
-                );
+                ));
             }
 
             thread::sleep(Duration::from_millis(50));
@@ -309,13 +326,26 @@ fn apply_isolated_env(command: &mut Command, home_dir: &Path) {
     command.env("RUST_BACKTRACE", "1");
 }
 
-fn reserve_local_addr() -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral localhost port");
-    let addr = listener
+fn reserve_distinct_local_addrs() -> (String, String) {
+    let grpc_listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral gRPC port");
+    let health_listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral health port");
+    let grpc_addr = grpc_listener
         .local_addr()
-        .expect("read ephemeral localhost port");
-    drop(listener);
-    addr.to_string()
+        .expect("read ephemeral gRPC address");
+    let health_addr = health_listener
+        .local_addr()
+        .expect("read ephemeral health address");
+    assert_ne!(
+        grpc_addr, health_addr,
+        "integration daemon gRPC and health listeners must use distinct ports"
+    );
+    drop((grpc_listener, health_listener));
+    (grpc_addr.to_string(), health_addr.to_string())
+}
+
+fn output_indicates_addr_in_use(output: &str) -> bool {
+    output.contains("Address already in use")
+        || output.contains("Only one usage of each socket address")
 }
 
 fn random_suffix() -> u128 {

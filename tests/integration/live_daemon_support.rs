@@ -14,6 +14,8 @@ use std::time::Duration;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+const DAEMON_SPAWN_ATTEMPTS: usize = 5;
+
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -56,19 +58,32 @@ fn ensure_claw_binary() -> &'static PathBuf {
     })
 }
 
-fn free_local_addr() -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral localhost port");
-    let addr = listener
+fn free_distinct_local_addrs() -> (SocketAddr, SocketAddr) {
+    let grpc_listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral gRPC port");
+    let health_listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral health port");
+    let grpc_addr = grpc_listener
         .local_addr()
-        .expect("read ephemeral localhost port");
-    drop(listener);
-    addr
+        .expect("read ephemeral gRPC address");
+    let health_addr = health_listener
+        .local_addr()
+        .expect("read ephemeral health address");
+    assert_ne!(
+        grpc_addr, health_addr,
+        "integration daemon gRPC and health listeners must use distinct ports"
+    );
+    drop((grpc_listener, health_listener));
+    (grpc_addr, health_addr)
 }
 
 fn child_output_string(output: &Output) -> String {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     format!("stdout:\n{stdout}\n\nstderr:\n{stderr}")
+}
+
+fn output_indicates_addr_in_use(output: &str) -> bool {
+    output.contains("Address already in use")
+        || output.contains("Only one usage of each socket address")
 }
 
 fn local_test_daemon_config() -> &'static str {
@@ -230,36 +245,48 @@ pub struct LiveDaemon {
 
 impl LiveDaemon {
     pub async fn spawn(root: &Path, extra_daemon_args: &[&str]) -> Self {
-        let grpc_addr = free_local_addr();
-        let health_addr = free_local_addr();
+        let mut last_error = String::new();
+        for attempt in 1..=DAEMON_SPAWN_ATTEMPTS {
+            let (grpc_addr, health_addr) = free_distinct_local_addrs();
 
-        let mut command = Command::new(ensure_claw_binary());
-        configure_isolated_home(&mut command, root);
-        let child = command
-            .current_dir(root)
-            .args(["--profile", "dev", "daemon"])
-            .arg("--listen")
-            .arg(grpc_addr.to_string())
-            .arg("--health-listen")
-            .arg(health_addr.to_string())
-            .args(extra_daemon_args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn live claw daemon");
+            let mut command = Command::new(ensure_claw_binary());
+            configure_isolated_home(&mut command, root);
+            let child = command
+                .current_dir(root)
+                .args(["--profile", "dev", "daemon"])
+                .arg("--listen")
+                .arg(grpc_addr.to_string())
+                .arg("--health-listen")
+                .arg(health_addr.to_string())
+                .args(extra_daemon_args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn live claw daemon");
 
-        let grpc_endpoint = format!("http://{grpc_addr}");
-        let mut daemon = Self {
-            child: Some(child),
-            grpc_addr,
-            health_addr,
-            grpc_endpoint,
-        };
-        daemon.wait_until_ready().await;
-        daemon
+            let grpc_endpoint = format!("http://{grpc_addr}");
+            let mut daemon = Self {
+                child: Some(child),
+                grpc_addr,
+                health_addr,
+                grpc_endpoint,
+            };
+            match daemon.wait_until_ready().await {
+                Ok(()) => return daemon,
+                Err(err)
+                    if output_indicates_addr_in_use(&err) && attempt < DAEMON_SPAWN_ATTEMPTS =>
+                {
+                    last_error = err;
+                    tokio::time::sleep(Duration::from_millis(50 * attempt as u64)).await;
+                }
+                Err(err) => panic!("{err}"),
+            }
+        }
+
+        panic!("daemon did not become ready after address retries: {last_error}");
     }
 
-    async fn wait_until_ready(&mut self) {
+    async fn wait_until_ready(&mut self) -> Result<(), String> {
         let mut last_health_error = String::new();
         let mut last_grpc_error = String::new();
 
@@ -277,10 +304,10 @@ impl LiveDaemon {
                     .expect("take exited daemon child")
                     .wait_with_output()
                     .expect("collect daemon output");
-                panic!(
+                return Err(format!(
                     "daemon exited before becoming ready with status {status}: {}",
                     child_output_string(&output)
-                );
+                ));
             }
 
             match raw_http_request(self.health_addr, "GET", "/v1/health/live", &[], &[]).await {
@@ -294,7 +321,7 @@ impl LiveDaemon {
                                 }))
                                 .await;
                             if hello.is_ok() {
-                                return;
+                                return Ok(());
                             }
                             last_grpc_error = hello.err().unwrap().to_string();
                         }
@@ -316,10 +343,10 @@ impl LiveDaemon {
         let output = child
             .wait_with_output()
             .expect("collect daemon output after timeout");
-        panic!(
+        Err(format!(
             "daemon did not become ready; last health error: {last_health_error}; last gRPC error: {last_grpc_error}; {}",
             child_output_string(&output)
-        );
+        ))
     }
 }
 

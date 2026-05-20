@@ -394,7 +394,7 @@ checksum = "c3e64b0cc0439b12df2fa678eae89a1c56a529fd067a9115f7827f1fffd22b32"
 
 [[package]]
 name = "claw-integration-tests"
-version = "0.1.0"
+version = "0.1.2-beta.1"
 dependencies = [
  "claw-vcs-core",
  "claw-vcs-crypto",
@@ -414,7 +414,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs"
-version = "0.1.0"
+version = "0.1.2-beta.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -450,7 +450,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-core"
-version = "0.1.0"
+version = "0.1.2-beta.1"
 dependencies = [
  "blake3",
  "bytes",
@@ -472,7 +472,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-crypto"
-version = "0.1.0"
+version = "0.1.2-beta.1"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -489,7 +489,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-git"
-version = "0.1.0"
+version = "0.1.2-beta.1"
 dependencies = [
  "claw-vcs-core",
  "claw-vcs-store",
@@ -502,7 +502,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-merge"
-version = "0.1.0"
+version = "0.1.2-beta.1"
 dependencies = [
  "claw-vcs-core",
  "claw-vcs-patch",
@@ -515,7 +515,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-patch"
-version = "0.1.0"
+version = "0.1.2-beta.1"
 dependencies = [
  "claw-vcs-core",
  "criterion",
@@ -528,7 +528,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-policy"
-version = "0.1.0"
+version = "0.1.2-beta.1"
 dependencies = [
  "claw-vcs-core",
  "proptest",
@@ -539,7 +539,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-store"
-version = "0.1.0"
+version = "0.1.2-beta.1"
 dependencies = [
  "blake3",
  "claw-vcs-core",
@@ -557,7 +557,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-sync"
-version = "0.1.0"
+version = "0.1.2-beta.1"
 dependencies = [
  "async-trait",
  "base64",
