@@ -682,20 +682,11 @@ fn public_launch_assets_exist_and_are_upload_ready() {
                 .expect("each external blocker must have an id")
         })
         .collect();
-    let expected_blocker_ids: HashSet<&str> = [
-        "pr-review-merge",
-        "dependabot-default-branch-alerts",
-        "cratesio-package-reservation",
-        "name-clearance-evidence",
-        "github-social-preview-upload",
-        "release-channel-verification",
-        "github-pages-publication",
-    ]
-    .into_iter()
-    .collect();
+    let expected_blocker_ids: HashSet<&str> =
+        ["release-channel-verification"].into_iter().collect();
     assert_eq!(
         blocker_ids, expected_blocker_ids,
-        "external blockers manifest must preserve the owner-side launch blocker set"
+        "external blockers manifest must preserve the remaining owner-side launch blocker set"
     );
     for blocker in blockers {
         let id = blocker
@@ -790,8 +781,8 @@ fn public_launch_assets_exist_and_are_upload_ready() {
     );
     assert_eq!(
         external_pending_items,
-        vec![10, 74, 94],
-        "only owner/release/name-clearance items should remain external pending"
+        vec![10],
+        "only release-channel verification should remain external pending"
     );
     assert_eq!(
         not_applicable_items,
@@ -799,10 +790,8 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         "only optional funding should remain not applicable"
     );
     for blocker in [
-        "PR #4 requires review approval before merge.",
-        "Package/name reservation",
+        "branch-protection review/signature requirements were restored",
         "hardened public release",
-        "Dependabot findings",
         "external-blockers.json",
     ] {
         assert!(
@@ -890,6 +879,8 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         "Attest release SBOM",
         "actions/attest-sbom@",
         "subject-path: artifacts/*",
+        "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.30.3/cargo-dist-installer.sh | sh",
+        "irm https://github.com/axodotdev/cargo-dist/releases/download/v0.30.3/cargo-dist-installer.ps1 | iex",
         "sha256sum -c sha256.sum --ignore-missing",
         "jq -e '",
         "cosign verify-blob",
