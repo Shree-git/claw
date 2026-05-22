@@ -63,10 +63,10 @@ metadata="claw-${tag}.release-metadata.json"
 report_path="${CLAW_RELEASE_VERIFY_REPORT:-}"
 
 case "$(uname -s):$(uname -m)" in
-  Darwin:arm64) archive="claw-aarch64-apple-darwin.tar.xz" ;;
-  Darwin:x86_64) archive="claw-x86_64-apple-darwin.tar.xz" ;;
-  Linux:x86_64) archive="claw-x86_64-unknown-linux-gnu.tar.xz" ;;
-  Linux:aarch64 | Linux:arm64) archive="claw-aarch64-unknown-linux-gnu.tar.xz" ;;
+  Darwin:arm64) archive="claw-vcs-aarch64-apple-darwin.tar.xz" ;;
+  Darwin:x86_64) archive="claw-vcs-x86_64-apple-darwin.tar.xz" ;;
+  Linux:x86_64) archive="claw-vcs-x86_64-unknown-linux-gnu.tar.xz" ;;
+  Linux:aarch64 | Linux:arm64) archive="claw-vcs-aarch64-unknown-linux-gnu.tar.xz" ;;
   *)
     echo "unsupported host for archive verification: $(uname -s) $(uname -m)" >&2
     exit 2
@@ -178,9 +178,9 @@ gh release download "$tag" --repo "$repo" \
   --pattern "sha256.sum" \
   --pattern "sha256.sum.sig" \
   --pattern "sha256.sum.pem" \
-  --pattern "claw-installer.sh" \
-  --pattern "claw-installer.sh.sig" \
-  --pattern "claw-installer.sh.pem" \
+  --pattern "claw-vcs-installer.sh" \
+  --pattern "claw-vcs-installer.sh.sig" \
+  --pattern "claw-vcs-installer.sh.pem" \
   --pattern "$sbom" \
   --pattern "$sbom.sig" \
   --pattern "$sbom.pem" \
@@ -244,7 +244,7 @@ verify_sbom_attestation() {
     --deny-self-hosted-runners
 }
 
-for signed_asset in "$archive" "sha256.sum" "claw-installer.sh" "$sbom" "$metadata"; do
+for signed_asset in "$archive" "sha256.sum" "claw-vcs-installer.sh" "$sbom" "$metadata"; do
   require_signed_asset "$signed_asset"
   verify_cosign_blob "$signed_asset"
   record_check "provenance" "cosign:$signed_asset" "pass" "$(jq -cn --arg asset "$signed_asset" '{asset: $asset}')"
@@ -334,7 +334,7 @@ verify_sha256_entry() {
 }
 
 verify_sha256_entry "$archive"
-verify_sha256_entry "claw-installer.sh"
+verify_sha256_entry "claw-vcs-installer.sh"
 verify_sha256_entry "$sbom"
 verify_sha256_entry "$metadata"
 
@@ -373,7 +373,7 @@ if [[ -z "$archive_binary" ]]; then
 fi
 smoke_repo "$archive_binary" "$workdir/archive-repo" "archive"
 
-HOME="$installer_home" bash "$assets/claw-installer.sh"
+HOME="$installer_home" bash "$assets/claw-vcs-installer.sh"
 installer_binary=""
 for candidate in "$installer_home/.local/bin/claw" "$installer_home/.cargo/bin/claw"; do
   if [[ -x "$candidate" ]]; then

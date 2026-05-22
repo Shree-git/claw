@@ -76,23 +76,23 @@ jobs:
         run: |
           mkdir -p release-assets
           gh release download "$RELEASE_TAG" \
-            -p 'claw-installer.sh' \
-            -p 'claw-x86_64-unknown-linux-gnu.tar.xz' \
+            -p 'claw-vcs-installer.sh' \
+            -p 'claw-vcs-x86_64-unknown-linux-gnu.tar.xz' \
             -p 'sha256.sum' \
             -D release-assets
 
       - name: Verify release metadata consistency
         working-directory: release-assets
         run: |
-          grep -q 'claw-installer.sh' sha256.sum
-          grep -q 'claw-x86_64-unknown-linux-gnu.tar.xz' sha256.sum
+          grep -q 'claw-vcs-installer.sh' sha256.sum
+          grep -q 'claw-vcs-x86_64-unknown-linux-gnu.tar.xz' sha256.sum
           sha256sum -c sha256.sum --ignore-missing
 
       - name: Archive smoke
         run: |
           set -euo pipefail
           mkdir -p archive-smoke
-          tar -xJf release-assets/claw-x86_64-unknown-linux-gnu.tar.xz -C archive-smoke
+          tar -xJf release-assets/claw-vcs-x86_64-unknown-linux-gnu.tar.xz -C archive-smoke
           binary="$(find archive-smoke -type f -name claw | head -n 1)"
           test -n "$binary"
           expected="${RELEASE_TAG#v}"
@@ -128,7 +128,7 @@ jobs:
           set -euo pipefail
           export HOME="$RUNNER_TEMP/linux-installer-home"
           mkdir -p "$HOME"
-          bash release-assets/claw-installer.sh
+          bash release-assets/claw-vcs-installer.sh
           expected="${RELEASE_TAG#v}"
           actual="$("$HOME/.local/bin/claw" --version | awk '{ print $2 }')"
           test "$actual" = "$expected"
@@ -174,8 +174,8 @@ jobs:
         id: arch
         run: |
           case "$(uname -m)" in
-            arm64) pattern='claw-aarch64-apple-darwin.tar.xz' ;;
-            x86_64) pattern='claw-x86_64-apple-darwin.tar.xz' ;;
+            arm64) pattern='claw-vcs-aarch64-apple-darwin.tar.xz' ;;
+            x86_64) pattern='claw-vcs-x86_64-apple-darwin.tar.xz' ;;
             *) echo "unsupported runner architecture: $(uname -m)" >&2; exit 1 ;;
           esac
           echo "pattern=$pattern" >> "$GITHUB_OUTPUT"
@@ -184,7 +184,7 @@ jobs:
         run: |
           mkdir -p release-assets
           gh release download "$RELEASE_TAG" \
-            -p 'claw-installer.sh' \
+            -p 'claw-vcs-installer.sh' \
             -p '${{ steps.arch.outputs.pattern }}' \
             -D release-assets
 
@@ -212,7 +212,7 @@ jobs:
           set -euo pipefail
           export HOME="$RUNNER_TEMP/macos-installer-home"
           mkdir -p "$HOME"
-          bash release-assets/claw-installer.sh
+          bash release-assets/claw-vcs-installer.sh
           expected="${RELEASE_TAG#v}"
           actual="$("$HOME/.local/bin/claw" --version | awk '{ print $2 }')"
           test "$actual" = "$expected"
@@ -280,9 +280,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force release-assets | Out-Null
           gh release download "$env:RELEASE_TAG" `
-            -p 'claw-installer.ps1' `
-            -p 'claw-x86_64-pc-windows-msvc.zip' `
-            -p 'claw-x86_64-pc-windows-msvc.msi' `
+            -p 'claw-vcs-installer.ps1' `
+            -p 'claw-vcs-x86_64-pc-windows-msvc.zip' `
+            -p 'claw-vcs-x86_64-pc-windows-msvc.msi' `
             -p 'sha256.sum' `
             -D release-assets
 
@@ -291,9 +291,9 @@ jobs:
         run: |
           $sum = Get-Content release-assets\sha256.sum
           foreach ($asset in @(
-            "claw-installer.ps1",
-            "claw-x86_64-pc-windows-msvc.zip",
-            "claw-x86_64-pc-windows-msvc.msi"
+            "claw-vcs-installer.ps1",
+            "claw-vcs-x86_64-pc-windows-msvc.zip",
+            "claw-vcs-x86_64-pc-windows-msvc.msi"
           )) {
             $line = ($sum | Select-String -SimpleMatch $asset | Select-Object -First 1).Line
             if (-not $line) {
@@ -309,7 +309,7 @@ jobs:
       - name: Zip archive smoke
         shell: pwsh
         run: |
-          Expand-Archive release-assets\claw-x86_64-pc-windows-msvc.zip -DestinationPath zip-smoke
+          Expand-Archive release-assets\claw-vcs-x86_64-pc-windows-msvc.zip -DestinationPath zip-smoke
           $binary = Get-ChildItem zip-smoke -Recurse -Filter claw.exe | Select-Object -First 1
           if (-not $binary) {
             throw "claw.exe not found in zip archive"
@@ -332,7 +332,7 @@ jobs:
         run: |
           $env:USERPROFILE = Join-Path $env:RUNNER_TEMP "powershell-installer-home"
           New-Item -ItemType Directory -Force $env:USERPROFILE | Out-Null
-          powershell -ExecutionPolicy Bypass -File .\release-assets\claw-installer.ps1
+          powershell -ExecutionPolicy Bypass -File .\release-assets\claw-vcs-installer.ps1
           $candidates = @(
             (Join-Path $env:USERPROFILE ".cargo\bin\claw.exe"),
             (Join-Path $env:USERPROFILE ".local\bin\claw.exe")
@@ -358,7 +358,7 @@ jobs:
       - name: MSI smoke
         shell: pwsh
         run: |
-          $msi = Resolve-Path release-assets\claw-x86_64-pc-windows-msvc.msi
+          $msi = Resolve-Path release-assets\claw-vcs-x86_64-pc-windows-msvc.msi
           $process = Start-Process msiexec.exe -ArgumentList @("/i", "`"$msi`"", "/qn", "/norestart") -Wait -PassThru
           if ($process.ExitCode -ne 0) {
             throw "msiexec failed with exit code $($process.ExitCode)"

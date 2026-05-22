@@ -44,6 +44,48 @@ on `main`, a replacement launch tag is cut, artifacts are published, and
 `scripts/verify-release-channel.sh <launch-tag>` passes from a clean
 environment.
 
+## 2026-05-22
+
+Environment:
+
+```text
+GitHub Actions release workflow
+```
+
+### v0.1.2-beta.2 Release Attempt
+
+Command shape:
+
+```bash
+git tag -a v0.1.2-beta.2 -m "Claw VCS v0.1.2-beta.2" b32200badb59c31fd72467a3d3889b696a2c7531
+git push origin v0.1.2-beta.2
+```
+
+Observed result:
+
+```text
+Release workflow run: https://github.com/Shree-git/claw-vcs/actions/runs/26316363286
+quality: passed
+security-audit-gate: passed
+compatibility-matrix-gate: passed on ubuntu-22.04, macos-latest, and windows-latest
+build-local-artifacts: passed for every target
+build-global-artifacts: passed
+contract-tests-gate: passed
+artifact-smoke-gate: failed on ubuntu-22.04, macos-latest, and windows-latest
+GitHub release: not created
+```
+
+Status: fail for release-channel verification. The workflow built the expected
+cargo-dist artifacts, but the artifact smoke gates looked for stale pre-app-name
+asset filenames like `claw-x86_64-unknown-linux-gnu.tar.xz` and
+`claw-x86_64-pc-windows-msvc.zip` instead of the published `claw-vcs-*` asset
+names.
+
+The release-channel blocker remains open until the artifact-name fix lands on
+`main`, a replacement launch tag is cut, artifacts are published, and
+`scripts/verify-release-channel.sh <launch-tag>` passes from a clean
+environment.
+
 ## 2026-05-11
 
 Environment:

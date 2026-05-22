@@ -2,5 +2,5 @@ apiVersion: v2
 name: claw
 description: Helm chart for deploying the claw operator daemon
 type: application
-version: 0.1.2-beta.2
-appVersion: "0.1.2-beta.2"
+version: 0.1.2-beta.3
+appVersion: "0.1.2-beta.3"
