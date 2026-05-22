@@ -470,7 +470,7 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         "gh release view",
         "targetCommitish",
         "git ls-remote --tags",
-        "claw-installer.sh",
+        "claw-vcs-installer.sh",
         "cosign verify-blob",
         "gh attestation verify",
         "--source-ref \"refs/tags/${tag}\"",
@@ -492,6 +492,16 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         assert!(
             release_verifier.contains(phrase),
             "release-channel verifier must include phrase: {phrase}"
+        );
+    }
+    for stale_name in [
+        "claw-installer.sh",
+        "claw-x86_64-unknown-linux-gnu.tar.xz",
+        "claw-aarch64-apple-darwin.tar.xz",
+    ] {
+        assert!(
+            !release_verifier.contains(stale_name),
+            "release-channel verifier must not use stale pre-app-name artifact name: {stale_name}"
         );
     }
 
@@ -855,6 +865,30 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         release_channel_smoke.contains("--tag \"$RELEASE_TAG\""),
         "cargo install from Git smoke must install the exact release tag under validation"
     );
+    for phrase in [
+        "claw-vcs-installer.sh",
+        "claw-vcs-installer.ps1",
+        "claw-vcs-x86_64-unknown-linux-gnu.tar.xz",
+        "claw-vcs-x86_64-pc-windows-msvc.zip",
+        "claw-vcs-x86_64-pc-windows-msvc.msi",
+    ] {
+        assert!(
+            release_channel_smoke.contains(phrase),
+            "release-channel smoke must use cargo-dist artifact name: {phrase}"
+        );
+    }
+    for stale_name in [
+        "claw-installer.sh",
+        "claw-installer.ps1",
+        "claw-x86_64-unknown-linux-gnu.tar.xz",
+        "claw-x86_64-pc-windows-msvc.zip",
+        "claw-x86_64-pc-windows-msvc.msi",
+    ] {
+        assert!(
+            !release_channel_smoke.contains(stale_name),
+            "release-channel smoke must not use stale pre-app-name artifact name: {stale_name}"
+        );
+    }
 
     let large_repo_drill = read_workspace_file(".github/workflows/large-repo-drill.yml");
     for phrase in [
@@ -892,6 +926,28 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         assert!(
             release_workflow.contains(phrase),
             "release workflow must pre-verify artifact provenance before upload: {phrase}"
+        );
+    }
+    for phrase in [
+        "claw-vcs-x86_64-unknown-linux-gnu.tar.xz",
+        "claw-vcs-aarch64-apple-darwin.tar.xz",
+        "claw-vcs-x86_64-pc-windows-msvc.zip",
+        "claw-vcs-x86_64-pc-windows-msvc.msi",
+    ] {
+        assert!(
+            release_workflow.contains(phrase),
+            "release artifact smoke gate must use cargo-dist artifact name: {phrase}"
+        );
+    }
+    for stale_name in [
+        "claw-x86_64-unknown-linux-gnu.tar.xz",
+        "claw-aarch64-apple-darwin.tar.xz",
+        "claw-x86_64-pc-windows-msvc.zip",
+        "claw-x86_64-pc-windows-msvc.msi",
+    ] {
+        assert!(
+            !release_workflow.contains(stale_name),
+            "release artifact smoke gate must not use stale pre-app-name artifact name: {stale_name}"
         );
     }
     let verify_artifacts_workflow = read_workspace_file(".github/workflows/verify-artifacts.yml");

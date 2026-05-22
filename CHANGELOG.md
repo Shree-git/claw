@@ -3,6 +3,14 @@
 All public launch notes for Claw VCS live here from the `v0.1.x` line onward.
 Earlier build details may appear in GitHub Releases.
 
+## v0.1.2-beta.3
+
+### Fixed
+
+- Updated release artifact smoke tests, release-channel smoke tests, verifier
+  scripts, and release docs to use cargo-dist's published `claw-vcs-*` asset
+  names while preserving the installed `claw` binary name.
+
 ## v0.1.2-beta.2
 
 ### Fixed

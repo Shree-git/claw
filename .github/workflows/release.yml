@@ -417,12 +417,12 @@ jobs:
 
           case "${{ matrix.os }}" in
             ubuntu-22.04)
-              archive="$(find target/distrib -maxdepth 1 -type f -name 'claw-x86_64-unknown-linux-gnu.tar.xz' | head -n 1)"
+              archive="$(find target/distrib -maxdepth 1 -type f -name 'claw-vcs-x86_64-unknown-linux-gnu.tar.xz' | head -n 1)"
               ;;
             macos-latest)
               case "$(uname -m)" in
-                arm64) pattern='claw-aarch64-apple-darwin.tar.xz' ;;
-                x86_64) pattern='claw-x86_64-apple-darwin.tar.xz' ;;
+                arm64) pattern='claw-vcs-aarch64-apple-darwin.tar.xz' ;;
+                x86_64) pattern='claw-vcs-x86_64-apple-darwin.tar.xz' ;;
                 *) echo "unsupported runner architecture: $(uname -m)" >&2; exit 1 ;;
               esac
               archive="$(find target/distrib -maxdepth 1 -type f -name "$pattern" | head -n 1)"
@@ -468,12 +468,12 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          $zip = Get-ChildItem -Path target/distrib -Filter "claw-x86_64-pc-windows-msvc.zip" -File | Select-Object -First 1
+          $zip = Get-ChildItem -Path target/distrib -Filter "claw-vcs-x86_64-pc-windows-msvc.zip" -File | Select-Object -First 1
           if (-not $zip) {
             throw "missing Windows release zip"
           }
 
-          $msi = Get-ChildItem -Path target/distrib -Filter "claw-x86_64-pc-windows-msvc.msi" -File | Select-Object -First 1
+          $msi = Get-ChildItem -Path target/distrib -Filter "claw-vcs-x86_64-pc-windows-msvc.msi" -File | Select-Object -First 1
           if (-not $msi) {
             throw "missing Windows MSI"
           }
