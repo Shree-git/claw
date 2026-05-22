@@ -11,7 +11,11 @@ Status key:
 
 ## Completion Summary
 
-The in-repository P0/P1/P2 hardening work is implemented on the `codex/public-launch-hardening` branch / PR #4. The goal is not complete until the external pending items below are finished: PR review/merge, default-branch Dependabot alert closure after the patched lockfile lands, package/name reservation where required, trademark/domain/social-handle review, GitHub social preview upload, optional GitHub Pages publication if the landing page should be served publicly, hardened public release publication, public artifact attestation verification, and clean-environment release-channel verification.
+The in-repository P0/P1/P2 hardening work landed through PR #4. The `main`
+branch-protection review/signature requirements were restored and verified on
+2026-05-21. The remaining external blocker is to publish the hardened public
+release, verify public artifact attestations, and complete clean-environment
+release-channel verification.
 
 ## P0
 
@@ -22,7 +26,7 @@ The in-repository P0/P1/P2 hardening work is implemented on the `codex/public-la
 | 3 | Implemented | `.gitignore` excludes OS/editor junk, local state, logs, databases, and secrets; `.DS_Store` is not tracked; strict public-launch preflight fails on ignored local junk outside approved build caches. |
 | 4 | Verified | `docs/operations/public-launch-checklist.md` records full-history gitleaks and trufflehog passes plus GitHub secret scanning/push protection. |
 | 5 | Implemented | `.github/workflows/ci.yml` runs formatting, clippy, tests, examples, docs, fuzz compile, `cargo-deny`, and `cargo-vet`. |
-| 6 | Verified | `docs/operations/public-launch-checklist.md` records `main` branch protection settings verified by GitHub API. |
+| 6 | Verified | `main` branch protection was restored and verified on 2026-05-21 through the GitHub branch-protection API and GraphQL: one approving review, stale approval dismissal, code-owner review, last-push approval, signed commits, strict required status checks, conversation resolution, no force pushes, no deletions, and admin enforcement are enabled. |
 | 7 | Implemented | Workflows use SHA-pinned actions; `rg "uses: .+@(v[0-9]\|main\|master\|latest)" .github/workflows` returns no tag-only uses. |
 | 8 | Implemented | Workflows default to `contents: read`; write scopes are job-local for release publishing, SAST, Scorecard, SBOM, and attestations. The release planning job uses read-only permissions on PRs. |
 | 9 | Implemented | `.github/workflows/release.yml`, `.github/workflows/ci.yml`, `.github/workflows/sbom.yml`, and `.github/workflows/verify-artifacts.yml` cover artifact/SBOM attestations and verification. |
@@ -49,7 +53,7 @@ The in-repository P0/P1/P2 hardening work is implemented on the `codex/public-la
 | 25 | Implemented | Property tests live in `crates/*/tests/*props.rs`, `crates/claw-core/tests/serialization_props.rs`, and policy/crypto tamper tests. Core properties now cover canonical object payloads, dependency ordering/uniqueness, and store/load roundtrips across all twelve core object types. |
 | 26 | Implemented | Git interop tests live in `crates/claw-git/tests/git_bridge_real_git.rs`, `tests/integration/spec_tests.rs`, and CLI Git workflow tests. |
 | 27 | Implemented | Durability/crash coverage appears in `tests/integration/chaos_tests.rs`, `tests/integration/backlog_gap_tests.rs`, store corruption tests, and admin backup/rollback tests; CI and contract workflows run the deterministic chaos suite. |
-| 28 | Implemented + external setting | `.github/dependabot.yml` and `.github/workflows/dependency-review.yml`; `scripts/public-launch-preflight.sh` verifies Dependabot security updates are enabled and fails launch readiness on open default-branch Dependabot alerts. |
+| 28 | Verified | `.github/dependabot.yml` and `.github/workflows/dependency-review.yml`; `scripts/public-launch-preflight.sh` verifies Dependabot security updates are enabled and fails launch readiness on open default-branch Dependabot alerts. Strict preflight on 2026-05-20 reported no open Dependabot alerts. |
 | 29 | Implemented + audit backlog | `deny.toml`; CI runs `cargo deny check` across configured release targets including macOS, Linux x86_64/aarch64, and Windows. Duplicate-version drift is currently warning-gated and documented in `docs/maintainers/dependency-policy.md`; move individual duplicate lines to documented `skip` entries or hard-deny once upstream splits are resolved. |
 | 30 | Implemented + audit backlog | `supply-chain/{audits.toml,config.toml,imports.lock}`; CI runs `cargo vet`, and `tests/integration/ops_artifacts_tests.rs` validates the cargo-vet metadata and dependency-policy shape. Current vet data starts from bootstrap exemptions; replacing high-risk runtime/security exemptions with real audits remains dependency-maintenance work. |
 | 31 | Implemented | `.github/workflows/sbom.yml` and release/CI SBOM attestation jobs; public release SBOM verification remains part of release-channel verification. |
@@ -114,8 +118,8 @@ The in-repository P0/P1/P2 hardening work is implemented on the `codex/public-la
 |---:|---|---|
 | 71 | Implemented | `docs/operations/release-reproducibility.md` and release workflow metadata/signing/attestation/SBOM gates, including a signed release metadata asset plus pre-upload verification of checksums, signatures, tag source digest, signer workflow, SBOM attestations, SBOM structure, and allowlist validation for generated `cargo-dist` matrix containers/install commands before execution. |
 | 72 | Implemented | `RELEASING.md` and `release.yml` include fmt, clippy, `cargo test --workspace --all-targets --locked`, audit, deny, vet, all fuzz-target smoke, dry-run, install verification, signatures, attestations, SBOM, Homebrew, Windows, JSON release-channel evidence, and rollback. |
-| 73 | Implemented | `docs/operations/package-registry-strategy.md` documents historical artifact availability, launch-verification-pending channels, planned channels, unsupported channels, and the `claw-vcs` crates.io package set; publish helper enforces release tag/version/owner guardrails before real publishing. The 2026-05-12 `claw-vcs-core` dry-run packaged and verified successfully; dependent package dry-runs wait for internal registry dependencies to go live. |
-| 74 | External pending | Registry availability checks are recorded; `scripts/public-launch-preflight.sh` automates repeatable package-name/repository checks for `claw-vcs` and `claw-vcs-*`, and strict mode verifies live crates.io package owners when `CLAW_PREFLIGHT_CRATESIO_OWNER` or `CLAW_CRATESIO_EXPECTED_OWNER` is set; `scripts/publish-cratesio.sh` requires exact tag/version and `CLAW_CRATESIO_EXPECTED_OWNER` for real publishing; strict preflight also requires completed name/domain/social/package evidence, with `scripts/verify-name-clearance-evidence.sh` rejecting blank or placeholder evidence, malformed dates, invalid counsel-review values, missing USPTO/WIPO/EUIPO evidence, missing package names, and missing trademark/similar-mark fields offline. `docs/operations/name-clearance.md` and `docs/operations/name-clearance-evidence.template.md` provide the evidence workflow for trademark, domain, social-handle, package, and social-preview checks. Actual package reservation/publication, domain/social handles, and trademark clearance require maintainer/account action. |
+| 73 | Verified | `docs/operations/package-registry-strategy.md` documents historical artifact availability, launch-verification-pending channels, planned channels, unsupported channels, and the `claw-vcs` crates.io package set; publish helper enforces release tag/version/owner guardrails before real publishing. The 2026-05-20 strict preflight verified `claw-vcs` and all `claw-vcs-*` crates.io packages under owner `Shree-git`. |
+| 74 | Verified | Registry availability checks are recorded; `scripts/public-launch-preflight.sh` automates repeatable package-name/repository checks for `claw-vcs` and `claw-vcs-*`, and strict mode verifies live crates.io package owners when `CLAW_PREFLIGHT_CRATESIO_OWNER` or `CLAW_CRATESIO_EXPECTED_OWNER` is set. `docs/operations/name-clearance-evidence.md` records completed trademark, domain, social-handle, package, counsel, and final-decision evidence; `scripts/verify-name-clearance-evidence.sh` and strict preflight verified it on 2026-05-20. |
 | 75 | Implemented | Install docs end with `claw --version`, `claw doctor`, and smoke test commands. |
 | 76 | Implemented | README and release verification docs make manual download/verification the primary release path and keep pipe installers as post-verification convenience forms. |
 | 77 | Implemented | `docs/operations/uninstall.md`. |
@@ -142,10 +146,10 @@ The in-repository P0/P1/P2 hardening work is implemented on the `codex/public-la
 
 | # | Status | Evidence |
 |---:|---|---|
-| 91 | Implemented + external setting | `docs/index.html`, `docs/landing-page.md`, and the manual, SHA-pinned `.github/workflows/pages.yml`; enabling Pages and verifying the rendered site remains an external repository setting if desired. |
+| 91 | Verified | `docs/index.html`, `docs/landing-page.md`, and the manual, SHA-pinned `.github/workflows/pages.yml`; strict preflight on 2026-05-20 reported GitHub Pages configured. |
 | 92 | Implemented | README includes restrained CI/license/security badges. |
-| 93 | Implemented | `docs/assets/social-preview.png` is an upload-ready 1280x640 asset with source SVG; preflight and artifact tests verify size and dimensions. |
-| 94 | External pending | Logo overinvestment intentionally deferred until name/trademark clearance. |
+| 93 | Verified | `docs/assets/social-preview.png` is an upload-ready 1280x640 asset with source SVG; preflight and artifact tests verify size and dimensions. Strict preflight on 2026-05-20 reported the GitHub social preview image uploaded. |
+| 94 | Verified | Logo overinvestment intentionally deferred; `docs/operations/name-clearance-evidence.md` records the v0.1.1 experimental launch naming decision and says to revisit trademark counsel before permanent logo, domain, or broad commercial brand investment. |
 | 95 | Verified | Repository topics, including `cli`, are verified with `gh repo view` and recorded in `public-launch-checklist.md`; preflight fails on missing required topics. |
 | 96 | Implemented | `examples/README.md` indexes `basic-human-workflow`, `agent-capsule`, `policy-gated-integration`, `git-roundtrip`, `sensitive-path`, `backup-restore`, demo media, and integration sketches. |
 | 97 | Implemented | Persona docs under `docs/persona/`. |
@@ -168,10 +172,7 @@ The in-repository P0/P1/P2 hardening work is implemented on the `codex/public-la
 The structured blocker list lives in
 [external-blockers.json](external-blockers.json).
 
-- PR #4 requires review approval before merge.
-- Package/name reservation, trademark review, domain/social-handle checks, GitHub social preview upload, strict launch evidence, and optional GitHub Pages publication require maintainer/account access.
 - The next hardened public release must be cut before public artifact attestations, SBOMs, signatures, installers, Homebrew, MSI, and clean-environment channel checks can be verified.
-- GitHub reports low `rand` Dependabot findings on the default branch until this branch's patched lockfile lands on `main`; preflight now gates on open Dependabot alerts.
 
 Owner-only launch blockers are tracked in
 <https://github.com/Shree-git/claw-vcs/issues/5>.

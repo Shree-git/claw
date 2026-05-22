@@ -2,6 +2,48 @@
 
 This log records concrete install-channel checks for the public launch backlog.
 
+## 2026-05-21
+
+Environment:
+
+```text
+GitHub Actions release workflow
+```
+
+### v0.1.2-beta.1 Release Attempt
+
+Command shape:
+
+```bash
+git tag -a v0.1.2-beta.1 -m "Claw VCS v0.1.2-beta.1" b08a14e1a87bd46fee485eab0aa3168f3751b073
+git push origin v0.1.2-beta.1
+```
+
+Observed result:
+
+```text
+Release workflow run: https://github.com/Shree-git/claw-vcs/actions/runs/26204463019
+quality: passed
+security-audit-gate: passed
+compatibility-matrix-gate: passed on ubuntu-22.04 and macos-latest while the run was inspected
+build-local-artifacts: failed for every target at Validate dist matrix inputs
+GitHub release: not created
+```
+
+Status: fail for release-channel verification. The workflow stopped before
+artifact publication because the dist matrix command allowlist rejected the
+generated cargo-dist installer commands:
+
+```text
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.30.3/cargo-dist-installer.sh | sh
+irm https://github.com/axodotdev/cargo-dist/releases/download/v0.30.3/cargo-dist-installer.ps1 | iex
+```
+
+The release-channel blocker remains open until the workflow allowlist fix lands
+on `main`, a replacement launch tag is cut, artifacts are published, and
+`scripts/verify-release-channel.sh <launch-tag>` passes from a clean
+environment.
+
 ## 2026-05-11
 
 Environment:

@@ -213,6 +213,8 @@ jobs:
               [[ -z "$line" || "$line" == \#* ]] && continue
               case "$line" in
                 "cargo install cargo-dist --version 0.30.3 --locked"*|\
+                "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.30.3/cargo-dist-installer.sh | sh"|\
+                "irm https://github.com/axodotdev/cargo-dist/releases/download/v0.30.3/cargo-dist-installer.ps1 | iex"|\
                 "rustup target add "*|\
                 "sudo apt-get update"*|\
                 "sudo apt-get install "*|\

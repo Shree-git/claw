@@ -1,82 +1,18 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-05-12",
+  "lastUpdated": "2026-05-21",
   "repository": "Shree-git/claw-vcs",
-  "branch": "codex/public-launch-hardening",
-  "pullRequest": 4,
+  "branch": "main",
   "blockers": [
-    {
-      "id": "pr-review-merge",
-      "category": "repository",
-      "ownerAction": true,
-      "requiredBefore": "public announcement",
-      "description": "PR #4 needs the required independent review approval and merge to main.",
-      "verification": [
-        "gh pr view 4 --json mergeStateStatus,reviewDecision,state,headRefOid",
-        "gh pr checks 4 --required"
-      ]
-    },
-    {
-      "id": "dependabot-default-branch-alerts",
-      "category": "security",
-      "ownerAction": false,
-      "requiredBefore": "public announcement",
-      "description": "GitHub reports low rand Dependabot alerts on the default branch until the patched lockfile from this branch lands on main.",
-      "verification": [
-        "CLAW_PREFLIGHT_STRICT=1 scripts/public-launch-preflight.sh"
-      ]
-    },
-    {
-      "id": "cratesio-package-reservation",
-      "category": "package-registry",
-      "ownerAction": true,
-      "requiredBefore": "documenting crates.io install",
-      "description": "Reserve or publish claw-vcs and all claw-vcs-* crates.io package names under the expected owner.",
-      "verification": [
-        "CLAW_PREFLIGHT_STRICT=1 CLAW_PREFLIGHT_CRATESIO_OWNER=<owner> scripts/public-launch-preflight.sh",
-        "CLAW_CRATESIO_EXPECTED_OWNER=<owner> scripts/publish-cratesio.sh --dry-run"
-      ]
-    },
-    {
-      "id": "name-clearance-evidence",
-      "category": "brand",
-      "ownerAction": true,
-      "requiredBefore": "public announcement",
-      "description": "Complete trademark, domain, social-handle, package, counsel, and final-decision evidence.",
-      "verification": [
-        "scripts/verify-name-clearance-evidence.sh docs/operations/name-clearance-evidence.md",
-        "CLAW_PREFLIGHT_STRICT=1 scripts/public-launch-preflight.sh"
-      ]
-    },
-    {
-      "id": "github-social-preview-upload",
-      "category": "repository",
-      "ownerAction": true,
-      "requiredBefore": "public announcement",
-      "description": "Upload docs/assets/social-preview.png in GitHub repository settings.",
-      "verification": [
-        "CLAW_PREFLIGHT_STRICT=1 scripts/public-launch-preflight.sh"
-      ]
-    },
     {
       "id": "release-channel-verification",
       "category": "release",
       "ownerAction": true,
       "requiredBefore": "documenting binary/install channels as launch-ready",
-      "description": "Cut the hardened launch release and verify archives, installers, signatures, attestations, SBOM, Homebrew, MSI, and cargo install from clean environments.",
+      "description": "Cut the hardened launch release and verify archives, installers, signatures, attestations, SBOM, Homebrew, MSI, and cargo install from clean environments. The v0.1.2-beta.1 tag was pushed on 2026-05-21, but the release workflow stopped before artifact publication because the dist matrix command allowlist rejected the generated cargo-dist installer commands.",
       "verification": [
         "CLAW_RELEASE_VERIFY_REPORT=release-verification/<launch-tag>.json scripts/verify-release-channel.sh <launch-tag>",
         "CLAW_VERIFY_HOMEBREW=1 scripts/verify-release-channel.sh <launch-tag>"
-      ]
-    },
-    {
-      "id": "github-pages-publication",
-      "category": "website",
-      "ownerAction": true,
-      "requiredBefore": "public website launch only",
-      "description": "If the launch includes a public website, enable Pages or another host for docs/index.html and verify the rendered site.",
-      "verification": [
-        "CLAW_PREFLIGHT_REQUIRE_PAGES=1 scripts/public-launch-preflight.sh"
       ]
     }
   ]
