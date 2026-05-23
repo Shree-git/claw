@@ -13,9 +13,8 @@ Status key:
 
 The in-repository P0/P1/P2 hardening work landed through PR #4. The `main`
 branch-protection review/signature requirements were restored and verified on
-2026-05-21. The remaining external blocker is to publish the hardened public
-release, verify public artifact attestations, and complete clean-environment
-release-channel verification.
+2026-05-21. The hardened `v0.1.2-beta.5` public release was published and
+release-channel verification passed on 2026-05-23.
 
 ## P0
 
@@ -30,7 +29,7 @@ release-channel verification.
 | 7 | Implemented | Workflows use SHA-pinned actions; `rg "uses: .+@(v[0-9]\|main\|master\|latest)" .github/workflows` returns no tag-only uses. |
 | 8 | Implemented | Workflows default to `contents: read`; write scopes are job-local for release publishing, SAST, Scorecard, SBOM, and attestations. The release planning job uses read-only permissions on PRs. |
 | 9 | Implemented | `.github/workflows/release.yml`, `.github/workflows/ci.yml`, `.github/workflows/sbom.yml`, and `.github/workflows/verify-artifacts.yml` cover artifact/SBOM attestations and verification. |
-| 10 | External pending | `docs/operations/package-registry-strategy.md` and `docs/operations/install-verification-log.md` separate historical artifacts, planned channels, unsupported channels, and launch-ready verification; clean-environment verification remains pending for the next hardened release. |
+| 10 | Verified | `v0.1.2-beta.5` published release assets, Sigstore bundles, GitHub attestations, SBOM, metadata, archive smoke, shell installer smoke, and `cargo install --git` verification passed; evidence is recorded in `docs/operations/install-verification-log.md` and `/tmp/claw-release-verification/v0.1.2-beta.5.json`. |
 | 11 | Implemented | `docs/security/threat-model.md`. |
 | 12 | Implemented | Visibility semantics are documented in `docs/reference/known-limitations.md`; policy code supports `EncryptedMetadataRequired`, recipient envelopes, authorized/revoked recipients, and the legacy `restricted` alias. |
 | 13 | Implemented | `crates/claw-sync/src/event_service.rs` implements an internal event bus; limitations document notes polling only as compatibility fallback. |
@@ -172,7 +171,7 @@ release-channel verification.
 The structured blocker list lives in
 [external-blockers.json](external-blockers.json).
 
-- The next hardened public release must be cut before public artifact attestations, SBOMs, signatures, installers, Homebrew, MSI, and clean-environment channel checks can be verified.
+- No external owner-side launch blockers remain in `external-blockers.json` after the `v0.1.2-beta.5` release-channel verification.
 
 Owner-only launch blockers are tracked in
 <https://github.com/Shree-git/claw-vcs/issues/5>.
