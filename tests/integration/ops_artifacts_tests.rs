@@ -467,11 +467,13 @@ fn public_launch_assets_exist_and_are_upload_ready() {
     let release_verifier = read_workspace_file("scripts/verify-release-channel.sh");
     for phrase in [
         "gh release download",
+        "--clobber",
         "gh release view",
         "targetCommitish",
         "git ls-remote --tags",
         "claw-vcs-installer.sh",
         "cosign verify-blob",
+        "--bundle \"$assets/$file.sigstore.json\"",
         "gh attestation verify",
         "--source-ref \"refs/tags/${tag}\"",
         "--source-digest \"$tag_commit\"",
@@ -918,6 +920,7 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         "sha256sum -c sha256.sum --ignore-missing",
         "jq -e '",
         "cosign verify-blob",
+        "--bundle \"${artifact}.sigstore.json\"",
         "gh attestation verify \"$artifact\" --repo \"$GITHUB_REPOSITORY\" \\",
         "--source-digest \"$GITHUB_SHA\"",
         "--signer-workflow \"${GITHUB_REPOSITORY}/.github/workflows/release.yml\"",

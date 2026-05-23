@@ -83,7 +83,7 @@ Tune thresholds after 2-4 weeks of baseline traffic.
 - **Secondary owners:** security on-call (auth/policy), storage owner (I/O bottlenecks), release owner (recent deploy correlation).
 - **CI signals to review during release operations:**
   - `contract-diff.yml` artifact `contract-diff-summary` when contract files change.
-  - `release.yml` signing output (`<artifact>.sig` and `<artifact>.pem`) and `verify-artifacts.yml` verification result.
+  - `release.yml` signing output (`<artifact>.sigstore.json`) and `verify-artifacts.yml` verification result.
   - Latest `nightly-chaos.yml` run (deterministic subset with `CHAOS_MODE=off`).
 - Every alert should link to:
   - this doc,

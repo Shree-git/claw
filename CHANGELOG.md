@@ -3,6 +3,13 @@
 All public launch notes for Claw VCS live here from the `v0.1.x` line onward.
 Earlier build details may appear in GitHub Releases.
 
+## v0.1.2-beta.5
+
+### Fixed
+
+- Updated release signing and verification to use Cosign Sigstore bundles
+  instead of deprecated separate signature and certificate sidecars.
+
 ## v0.1.2-beta.4
 
 ### Fixed

@@ -119,6 +119,41 @@ on `main`, a replacement launch tag is cut, artifacts are published, and
 `scripts/verify-release-channel.sh <launch-tag>` passes from a clean
 environment.
 
+### v0.1.2-beta.4 Release Attempt
+
+Command shape:
+
+```bash
+git tag -a v0.1.2-beta.4 -m "Claw VCS v0.1.2-beta.4" 94d93c90fe2bb57b1d60bf864d28903c7ed90678
+git push origin v0.1.2-beta.4
+```
+
+Observed result:
+
+```text
+Release workflow run: https://github.com/Shree-git/claw-vcs/actions/runs/26318558231
+quality: passed
+security-audit-gate: passed
+compatibility-matrix-gate: passed on ubuntu-22.04, macos-latest, and windows-latest
+build-local-artifacts: passed for every target
+build-global-artifacts: passed
+contract-tests-gate: passed
+artifact-smoke-gate: passed on ubuntu-22.04, macos-latest, and windows-latest
+host: failed at Sign release artifacts
+GitHub release: not created
+```
+
+Status: fail for release-channel verification. The release workflow reached the
+publish host job, but the installed Cosign version ignored the deprecated
+`--output-signature` and `--output-certificate` flags under its current bundle
+format and failed while signing release metadata. The next release attempt must
+emit and verify Sigstore bundle sidecars.
+
+The release-channel blocker remains open until the Cosign bundle signing fix
+lands on `main`, a replacement launch tag is cut, artifacts are published, and
+`scripts/verify-release-channel.sh <launch-tag>` passes from a clean
+environment.
+
 ## 2026-05-11
 
 Environment:
