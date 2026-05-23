@@ -2,6 +2,53 @@
 
 This log records concrete install-channel checks for the public launch backlog.
 
+## 2026-05-23
+
+Environment:
+
+```text
+GitHub Actions release workflow
+Darwin arm64 local release-channel verifier
+```
+
+### v0.1.2-beta.5 Release Verification
+
+Command shape:
+
+```bash
+git tag -a v0.1.2-beta.5 -m "Claw VCS v0.1.2-beta.5" cd4915abe2ae11eb62d6250d615394e65bb350dd
+git push origin v0.1.2-beta.5
+CLAW_RELEASE_VERIFY_WORKDIR=/tmp/claw-release-verification/v0.1.2-beta.5 \
+  CLAW_RELEASE_VERIFY_REPORT=/tmp/claw-release-verification/v0.1.2-beta.5.json \
+  scripts/verify-release-channel.sh v0.1.2-beta.5
+```
+
+Observed result:
+
+```text
+Release workflow run: https://github.com/Shree-git/claw-vcs/actions/runs/26319611049
+quality: passed
+security-audit-gate: passed
+compatibility-matrix-gate: passed on ubuntu-22.04, macos-latest, and windows-latest
+build-local-artifacts: passed for every target
+build-global-artifacts: passed
+contract-tests-gate: passed
+artifact-smoke-gate: passed on ubuntu-22.04, macos-latest, and windows-latest
+host: passed signing, bundle verification, attestations, and GitHub release creation
+GitHub release: https://github.com/Shree-git/claw-vcs/releases/tag/v0.1.2-beta.5
+release-channel verifier: passed on Darwin arm64
+```
+
+Status: pass for release-channel verification. The published release includes
+archive, installer, checksum, SBOM, metadata, source, manifest, MSI, and
+Homebrew formula assets with Sigstore bundle sidecars. Local verification
+checked the Darwin arm64 archive, shell installer, `cargo install --git`,
+Cosign bundle verification, GitHub provenance/SBOM attestations, checksums,
+SBOM readability, and release metadata. Windows installer/MSI smoke remains
+covered by `.github/workflows/release-channel-smoke.yml`.
+
+The release-channel blocker is closed for `v0.1.2-beta.5`.
+
 ## 2026-05-21
 
 Environment:

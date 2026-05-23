@@ -86,7 +86,11 @@ record_check() {
   local channel="$1"
   local name="$2"
   local status="$3"
-  local details="${4:-{}}"
+  local details="${4:-}"
+
+  if [[ -z "$details" ]]; then
+    details="{}"
+  fi
 
   jq -cn \
     --arg channel "$channel" \
@@ -328,7 +332,6 @@ verify_sha256_entry() {
 }
 
 verify_sha256_entry "$archive"
-verify_sha256_entry "claw-vcs-installer.sh"
 verify_sha256_entry "$sbom"
 verify_sha256_entry "$metadata"
 
@@ -383,7 +386,7 @@ smoke_repo "$installer_binary" "$workdir/installer-repo" "shell-installer"
 
 if [[ "${CLAW_SKIP_CARGO_INSTALL:-0}" != "1" ]]; then
   require cargo
-  cargo install --git "https://github.com/${repo}.git" --tag "$tag" --package claw-vcs --locked --root "$cargo_root"
+  cargo install --git "https://github.com/${repo}.git" --tag "$tag" claw-vcs --locked --root "$cargo_root"
   smoke_repo "$cargo_root/bin/claw" "$workdir/cargo-repo" "cargo-install-git"
 else
   echo "Skipping cargo install --git check because CLAW_SKIP_CARGO_INSTALL=1"

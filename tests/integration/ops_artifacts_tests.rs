@@ -469,6 +469,7 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         "gh release download",
         "--clobber",
         "gh release view",
+        "local details=\"${4:-}\"",
         "targetCommitish",
         "git ls-remote --tags",
         "claw-vcs-installer.sh",
@@ -479,6 +480,7 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         "--source-digest \"$tag_commit\"",
         "--signer-workflow \"${repo}/.github/workflows/release.yml\"",
         "--deny-self-hosted-runners",
+        "cargo install --git \"https://github.com/${repo}.git\" --tag \"$tag\" claw-vcs --locked",
         "CLAW_RELEASE_VERIFY_REPORT",
         "schemaVersion: 1",
         "checks: .",
@@ -607,8 +609,8 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         "README release-channel examples must require an explicitly verified launch tag"
     );
     assert!(
-        readme.contains("Until that tag is recorded in the install verification log"),
-        "README must tell users to stay on source install until a launch-hardening tag is verified"
+        readme.contains("verified `v0.1.2-beta.5`"),
+        "README must identify the verified launch-hardening tag"
     );
 
     let package_strategy = read_workspace_file("docs/operations/package-registry-strategy.md");
@@ -694,11 +696,9 @@ fn public_launch_assets_exist_and_are_upload_ready() {
                 .expect("each external blocker must have an id")
         })
         .collect();
-    let expected_blocker_ids: HashSet<&str> =
-        ["release-channel-verification"].into_iter().collect();
-    assert_eq!(
-        blocker_ids, expected_blocker_ids,
-        "external blockers manifest must preserve the remaining owner-side launch blocker set"
+    assert!(
+        blocker_ids.is_empty(),
+        "external blockers manifest must be empty after release-channel verification"
     );
     for blocker in blockers {
         let id = blocker
@@ -793,8 +793,8 @@ fn public_launch_assets_exist_and_are_upload_ready() {
     );
     assert_eq!(
         external_pending_items,
-        vec![10],
-        "only release-channel verification should remain external pending"
+        Vec::<usize>::new(),
+        "no release-channel external pending items should remain"
     );
     assert_eq!(
         not_applicable_items,
@@ -803,7 +803,7 @@ fn public_launch_assets_exist_and_are_upload_ready() {
     );
     for blocker in [
         "branch-protection review/signature requirements were restored",
-        "hardened public release",
+        "v0.1.2-beta.5",
         "external-blockers.json",
     ] {
         assert!(

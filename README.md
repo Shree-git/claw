@@ -286,7 +286,7 @@ For the current working tree, the source install path has been smoke-tested with
 
 ### Current source install
 
-Use this path until a launch-hardening release is published and verified:
+Use this path when developing from source or when you need unreleased changes:
 
 ```bash
 git clone https://github.com/shree-git/claw-vcs.git
@@ -298,13 +298,11 @@ claw doctor
 
 ### Release channels
 
-The release-channel commands below are for the next verified launch-hardening
-release. Until that tag is recorded in the install verification log, use the
-current source install above. Do not treat `/latest`, Homebrew, MSI, or installer output as
-launch-ready until the release notes and
+The release-channel commands below are for the verified `v0.1.2-beta.5`
+launch-hardening release. For future releases, treat `/latest`, Homebrew, MSI,
+or installer output as launch-ready only after the release notes and
 [install verification log](docs/operations/install-verification-log.md) record a
-passing current-tag verification. In the examples below, replace `<launch-tag>`
-with that verified tag.
+passing current-tag verification.
 
 ### macOS
 
@@ -523,7 +521,7 @@ See [uninstall instructions](docs/operations/uninstall.md) for Homebrew, MSI, ma
 
 ## Project status
 
-Claw VCS is **v0.1.2-beta.5 beta candidate**. The repository includes release, operator, rollback, and production preflight tooling, but public release channels must be verified per release before they are treated as live. Keep Git or another proven system as the source of truth while evaluating Claw VCS.
+Claw VCS is **v0.1.2-beta.5 beta**. The repository includes release, operator, rollback, and production preflight tooling, and the `v0.1.2-beta.5` public release channels have passed launch-hardening verification. Keep Git or another proven system as the source of truth while evaluating Claw VCS.
 
 ## License
 
