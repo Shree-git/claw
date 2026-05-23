@@ -31,12 +31,11 @@ If you downloaded the full release asset set, `sha256sum -c sha256.sum` or
 
 ## Cosign Blob Signatures
 
-When a release provides `.sig` and certificate material:
+When a release provides Sigstore bundle material:
 
 ```bash
 cosign verify-blob \
-  --signature ./claw-vcs-x86_64-unknown-linux-gnu.tar.xz.sig \
-  --certificate ./claw-vcs-x86_64-unknown-linux-gnu.tar.xz.pem \
+  --bundle ./claw-vcs-x86_64-unknown-linux-gnu.tar.xz.sigstore.json \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp '^https://github.com/Shree-git/(claw|claw-vcs)/\.github/workflows/release\.yml@refs/tags/vX.Y.Z$' \
   ./claw-vcs-x86_64-unknown-linux-gnu.tar.xz

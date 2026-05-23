@@ -712,6 +712,7 @@ jobs:
             find artifacts -type f \
               ! -name '*.sig' \
               ! -name '*.pem' \
+              ! -name '*.sigstore.json' \
               | sort
           )
 
@@ -722,8 +723,7 @@ jobs:
 
           for artifact in "${artifacts_to_sign[@]}"; do
             cosign sign-blob --yes \
-              --output-signature "${artifact}.sig" \
-              --output-certificate "${artifact}.pem" \
+              --bundle "${artifact}.sigstore.json" \
               "$artifact"
           done
       - name: Verify signed artifacts before release upload
@@ -741,6 +741,7 @@ jobs:
             find artifacts -type f \
               ! -name '*.sig' \
               ! -name '*.pem' \
+              ! -name '*.sigstore.json' \
               | sort
           )
 
@@ -751,8 +752,7 @@ jobs:
 
           for artifact in "${artifacts_to_verify[@]}"; do
             cosign verify-blob \
-              --signature "${artifact}.sig" \
-              --certificate "${artifact}.pem" \
+              --bundle "${artifact}.sigstore.json" \
               --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
               --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\\.github/workflows/release\\.yml@refs/tags/${RELEASE_TAG}$" \
               "$artifact"

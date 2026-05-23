@@ -112,6 +112,7 @@ jobs:
                 ! -name '*.crt' \
                 ! -name '*.cert' \
                 ! -name '*.certificate' \
+                ! -name '*.sigstore.json' \
               | while IFS= read -r file; do
                   if ! is_manifest_metadata "$file"; then
                     printf '%s\n' "$file"
@@ -121,55 +122,33 @@ jobs:
           )
 
           if [[ ${#artifacts[@]} -eq 0 ]]; then
-            echo "ERROR: no artifact files found to verify in $ARTIFACT_ROOT after excluding signature/certificate sidecars and manifest metadata" >&2
+            echo "ERROR: no artifact files found to verify in $ARTIFACT_ROOT after excluding signature bundles and manifest metadata" >&2
             exit 1
           fi
 
-          missing_pair_count=0
-          declare -a missing_pair_messages=()
+          missing_bundle_count=0
+          declare -a missing_bundle_messages=()
 
           for artifact in "${artifacts[@]}"; do
-            sig_file="${artifact}.sig"
+            bundle_file="${artifact}.sigstore.json"
 
-            cert_file=""
-            for candidate in "${artifact}.pem" "${artifact}.crt" "${artifact}.cert" "${artifact}.certificate"; do
-              if [[ -f "$candidate" ]]; then
-                cert_file="$candidate"
-                break
-              fi
-            done
-
-            if [[ ! -f "$sig_file" || -z "$cert_file" ]]; then
-              ((missing_pair_count+=1))
-              missing_detail="- ${artifact}"
-              if [[ ! -f "$sig_file" ]]; then
-                missing_detail+=" | missing signature: ${sig_file}"
-              fi
-              if [[ -z "$cert_file" ]]; then
-                missing_detail+=" | missing certificate: expected one of ${artifact}.pem, ${artifact}.crt, ${artifact}.cert, ${artifact}.certificate"
-              fi
-              missing_pair_messages+=("$missing_detail")
+            if [[ ! -f "$bundle_file" ]]; then
+              ((missing_bundle_count+=1))
+              missing_bundle_messages+=("- ${artifact} | missing bundle: ${bundle_file}")
             fi
           done
 
-          if [[ $missing_pair_count -gt 0 ]]; then
-            echo "ERROR: missing required signature/certificate pairs for ${missing_pair_count} artifact(s):" >&2
-            printf '%s\n' "${missing_pair_messages[@]}" >&2
-            echo "Each artifact to verify must have both <artifact>.sig and one certificate sidecar (.pem/.crt/.cert/.certificate)." >&2
+          if [[ $missing_bundle_count -gt 0 ]]; then
+            echo "ERROR: missing required Sigstore bundles for ${missing_bundle_count} artifact(s):" >&2
+            printf '%s\n' "${missing_bundle_messages[@]}" >&2
+            echo "Each artifact to verify must have a <artifact>.sigstore.json bundle." >&2
             exit 1
           fi
 
           verified_count=0
 
           for artifact in "${artifacts[@]}"; do
-            sig_file="${artifact}.sig"
-            cert_file=""
-            for candidate in "${artifact}.pem" "${artifact}.crt" "${artifact}.cert" "${artifact}.certificate"; do
-              if [[ -f "$candidate" ]]; then
-                cert_file="$candidate"
-                break
-              fi
-            done
+            bundle_file="${artifact}.sigstore.json"
 
             echo "Verifying $artifact"
 
@@ -180,15 +159,13 @@ jobs:
               fi
 
               cosign verify-blob \
-                --signature "$sig_file" \
-                --certificate "$cert_file" \
+                --bundle "$bundle_file" \
                 --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
                 --certificate-identity-regexp "^https://github.com/${repo_identity_pattern}/\\.github/workflows/release\\.yml@refs/tags/${RELEASE_TAG}$" \
                 "$artifact"
             else
               cosign verify-blob \
-                --signature "$sig_file" \
-                --certificate "$cert_file" \
+                --bundle "$bundle_file" \
                 "$artifact"
             fi
 
@@ -251,6 +228,7 @@ jobs:
                 ! -name '*.crt' \
                 ! -name '*.cert' \
                 ! -name '*.certificate' \
+                ! -name '*.sigstore.json' \
               | while IFS= read -r file; do
                   if ! is_manifest_metadata "$file"; then
                     printf '%s\n' "$file"

@@ -242,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-core"
-version = "0.1.2-beta.4"
+version = "0.1.2-beta.5"
 dependencies = [
  "blake3",
  "bytes",
@@ -262,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-crypto"
-version = "0.1.2-beta.4"
+version = "0.1.2-beta.5"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -278,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-git"
-version = "0.1.2-beta.4"
+version = "0.1.2-beta.5"
 dependencies = [
  "claw-vcs-core",
  "claw-vcs-store",
@@ -289,7 +289,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-patch"
-version = "0.1.2-beta.4"
+version = "0.1.2-beta.5"
 dependencies = [
  "claw-vcs-core",
  "serde",
@@ -300,7 +300,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-policy"
-version = "0.1.2-beta.4"
+version = "0.1.2-beta.5"
 dependencies = [
  "claw-vcs-core",
  "serde",
@@ -310,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-store"
-version = "0.1.2-beta.4"
+version = "0.1.2-beta.5"
 dependencies = [
  "blake3",
  "claw-vcs-core",
@@ -326,7 +326,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-sync"
-version = "0.1.2-beta.4"
+version = "0.1.2-beta.5"
 dependencies = [
  "async-trait",
  "base64",

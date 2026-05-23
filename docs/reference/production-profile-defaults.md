@@ -5,7 +5,7 @@ Default values below are the baseline generated/used by Claw when `.claw/config.
 ## Enforcement Boundary
 
 - **Runtime-enforced defaults:** values in this document are applied by the runtime when config is absent or migrated.
-- **CI-enforced release controls (separate from runtime defaults):** `contract-diff.yml`, `release.yml` gates, signed artifact sidecars (`.sig`/`.pem`), and scheduled `nightly-chaos.yml` execution.
+- **CI-enforced release controls (separate from runtime defaults):** `contract-diff.yml`, `release.yml` gates, signed artifact bundles (`.sigstore.json`), and scheduled `nightly-chaos.yml` execution.
 - **Recommended operator practice:** run `verify-artifacts.yml` for the release tag before promotion, and review nightly chaos results during release readiness.
 
 | Section | Key | Default |

@@ -172,21 +172,17 @@ record_check "release" "metadata" "pass" "$(
 )"
 
 gh release download "$tag" --repo "$repo" \
+  --clobber \
   --pattern "$archive" \
-  --pattern "$archive.sig" \
-  --pattern "$archive.pem" \
+  --pattern "$archive.sigstore.json" \
   --pattern "sha256.sum" \
-  --pattern "sha256.sum.sig" \
-  --pattern "sha256.sum.pem" \
+  --pattern "sha256.sum.sigstore.json" \
   --pattern "claw-vcs-installer.sh" \
-  --pattern "claw-vcs-installer.sh.sig" \
-  --pattern "claw-vcs-installer.sh.pem" \
+  --pattern "claw-vcs-installer.sh.sigstore.json" \
   --pattern "$sbom" \
-  --pattern "$sbom.sig" \
-  --pattern "$sbom.pem" \
+  --pattern "$sbom.sigstore.json" \
   --pattern "$metadata" \
-  --pattern "$metadata.sig" \
-  --pattern "$metadata.pem" \
+  --pattern "$metadata.sigstore.json" \
   --dir "$assets"
 
 require_asset() {
@@ -202,8 +198,7 @@ require_signed_asset() {
   local file="$1"
 
   require_asset "$file"
-  require_asset "$file.sig"
-  require_asset "$file.pem"
+  require_asset "$file.sigstore.json"
 }
 
 verify_cosign_blob() {
@@ -215,8 +210,7 @@ verify_cosign_blob() {
   fi
 
   cosign verify-blob \
-    --signature "$assets/$file.sig" \
-    --certificate "$assets/$file.pem" \
+    --bundle "$assets/$file.sigstore.json" \
     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
     --certificate-identity-regexp "^https://github.com/${repo_identity_pattern}/\\.github/workflows/release\\.yml@refs/tags/${tag}$" \
     "$assets/$file"

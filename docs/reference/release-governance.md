@@ -25,11 +25,11 @@ Define the current, implemented release gates and operator responsibilities for 
   - Runs on PRs and pushes to `main`.
   - Validates container build smoke, Helm lint/template rendering, Terraform static validation, and systemd template sanity.
 - **Signed artifact flow (`release.yml` + `verify-artifacts.yml`):**
-  - `release.yml` signs each release artifact with `cosign sign-blob`, producing `<artifact>.sig` and `<artifact>.pem`.
+  - `release.yml` signs each release artifact with `cosign sign-blob`, producing `<artifact>.sigstore.json`.
   - `release.yml` verifies checksums, Cosign signatures, GitHub artifact
     attestations, exact tag/source digest, signer workflow, and SBOM structure
     before uploading the signed artifact set to the GitHub Release.
-  - `verify-artifacts.yml` verifies signature and certificate sidecars with `cosign verify-blob`, verifies GitHub artifact attestations with `gh attestation verify`, and fails on missing pairs.
+  - `verify-artifacts.yml` verifies Sigstore bundles with `cosign verify-blob`, verifies GitHub artifact attestations with `gh attestation verify`, and fails on missing bundles.
 - **Release channel smoke (`release-channel-smoke.yml`):**
   - Runs on published releases or manual dispatch.
   - Validates Linux, macOS, and Windows release archives/installers where assets exist, plus checksum consistency and Homebrew installability.
@@ -78,5 +78,5 @@ Define the current, implemented release gates and operator responsibilities for 
 - Completed release checklist.
 - Contract diff summary artifact (`contract-diff-summary`).
 - Compatibility matrix artifact present and valid (`docs/reference/compatibility-matrix.json`).
-- Signed release artifacts (`<artifact>`, `<artifact>.sig`, `<artifact>.pem`) and verification record.
+- Signed release artifacts (`<artifact>`, `<artifact>.sigstore.json`) and verification record.
 - Release notes with known issues and rollback point.
