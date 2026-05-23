@@ -72,7 +72,11 @@ record_check() {
   local channel="$1"
   local name="$2"
   local status="$3"
-  local details="${4:-{}}"
+  local details="${4:-}"
+
+  if [[ -z "$details" ]]; then
+    details="{}"
+  fi
 
   jq -cn \
     --arg channel "$channel" \
@@ -159,10 +163,10 @@ require tar
 require shasum
 
 case "$(uname -s):$(uname -m)" in
-  Darwin:arm64) archive="claw-aarch64-apple-darwin.tar.xz" ;;
-  Darwin:x86_64) archive="claw-x86_64-apple-darwin.tar.xz" ;;
-  Linux:x86_64) archive="claw-x86_64-unknown-linux-gnu.tar.xz" ;;
-  Linux:aarch64 | Linux:arm64) archive="claw-aarch64-unknown-linux-gnu.tar.xz" ;;
+  Darwin:arm64) archive="claw-vcs-aarch64-apple-darwin.tar.xz" ;;
+  Darwin:x86_64) archive="claw-vcs-x86_64-apple-darwin.tar.xz" ;;
+  Linux:x86_64) archive="claw-vcs-x86_64-unknown-linux-gnu.tar.xz" ;;
+  Linux:aarch64 | Linux:arm64) archive="claw-vcs-aarch64-unknown-linux-gnu.tar.xz" ;;
   *)
     echo "unsupported host for archive verification: $(uname -s) $(uname -m)" >&2
     exit 2
@@ -216,21 +220,17 @@ record_check "release" "metadata" "pass" "$(
 )"
 
 gh release download "$tag" --repo "$repo" \
+  --clobber \
   --pattern "$archive" \
-  --pattern "$archive.sig" \
-  --pattern "$archive.pem" \
+  --pattern "$archive.sigstore.json" \
   --pattern "sha256.sum" \
-  --pattern "sha256.sum.sig" \
-  --pattern "sha256.sum.pem" \
-  --pattern "claw-installer.sh" \
-  --pattern "claw-installer.sh.sig" \
-  --pattern "claw-installer.sh.pem" \
+  --pattern "sha256.sum.sigstore.json" \
+  --pattern "claw-vcs-installer.sh" \
+  --pattern "claw-vcs-installer.sh.sigstore.json" \
   --pattern "$sbom" \
-  --pattern "$sbom.sig" \
-  --pattern "$sbom.pem" \
+  --pattern "$sbom.sigstore.json" \
   --pattern "$metadata" \
-  --pattern "$metadata.sig" \
-  --pattern "$metadata.pem" \
+  --pattern "$metadata.sigstore.json" \
   --dir "$assets"
 
 require_asset() {
@@ -246,8 +246,7 @@ require_signed_asset() {
   local file="$1"
 
   require_asset "$file"
-  require_asset "$file.sig"
-  require_asset "$file.pem"
+  require_asset "$file.sigstore.json"
 }
 
 verify_cosign_blob() {
@@ -259,8 +258,7 @@ verify_cosign_blob() {
   fi
 
   cosign verify-blob \
-    --signature "$assets/$file.sig" \
-    --certificate "$assets/$file.pem" \
+    --bundle "$assets/$file.sigstore.json" \
     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
     --certificate-identity-regexp "^https://github.com/${repo_identity_pattern}/\\.github/workflows/release\\.yml@refs/tags/${tag}$" \
     "$assets/$file"
@@ -288,7 +286,7 @@ verify_sbom_attestation() {
     --deny-self-hosted-runners
 }
 
-for signed_asset in "$archive" "sha256.sum" "claw-installer.sh" "$sbom" "$metadata"; do
+for signed_asset in "$archive" "sha256.sum" "claw-vcs-installer.sh" "$sbom" "$metadata"; do
   require_signed_asset "$signed_asset"
   verify_cosign_blob "$signed_asset"
   record_check "provenance" "cosign:$signed_asset" "pass" "$(jq -cn --arg asset "$signed_asset" '{asset: $asset}')"
@@ -378,7 +376,6 @@ verify_sha256_entry() {
 }
 
 verify_sha256_entry "$archive"
-verify_sha256_entry "claw-installer.sh"
 verify_sha256_entry "$sbom"
 verify_sha256_entry "$metadata"
 
@@ -417,7 +414,7 @@ if [[ -z "$archive_binary" ]]; then
 fi
 smoke_repo "$archive_binary" "$workdir/archive-repo" "archive"
 
-HOME="$installer_home" bash "$assets/claw-installer.sh"
+HOME="$installer_home" bash "$assets/claw-vcs-installer.sh"
 installer_binary=""
 for candidate in "$installer_home/.local/bin/claw" "$installer_home/.cargo/bin/claw"; do
   if [[ -x "$candidate" ]]; then
@@ -433,7 +430,7 @@ smoke_repo "$installer_binary" "$workdir/installer-repo" "shell-installer"
 
 if [[ "${CLAW_SKIP_CARGO_INSTALL:-0}" != "1" ]]; then
   require cargo
-  cargo install --git "https://github.com/${repo}.git" --tag "$tag" --package claw-vcs --locked --root "$cargo_root"
+  cargo install --git "https://github.com/${repo}.git" --tag "$tag" claw-vcs --locked --root "$cargo_root"
   smoke_repo "$cargo_root/bin/claw" "$workdir/cargo-repo" "cargo-install-git"
 else
   echo "Skipping cargo install --git check because CLAW_SKIP_CARGO_INSTALL=1"

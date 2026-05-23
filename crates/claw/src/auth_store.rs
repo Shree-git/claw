@@ -124,10 +124,7 @@ fn decrypt_profile_tokens(profile_name: &str, profile: &mut AuthProfile) {
 }
 
 pub fn try_load_auth_config() -> anyhow::Result<AuthConfig> {
-    let path = match auth_config_path() {
-        Ok(p) => p,
-        Err(err) => return Err(err),
-    };
+    let path = auth_config_path()?;
 
     if !path.exists() {
         return Ok(AuthConfig::default());

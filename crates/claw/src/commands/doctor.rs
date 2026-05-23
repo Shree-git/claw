@@ -829,6 +829,10 @@ mod tests {
         std::fs::write(refs.join("heads").join("CON"), b"not-an-id\n").expect("write ref");
         std::fs::write(refs.join("heads").join("trailing-dot."), b"not-an-id\n")
             .expect("write ref");
+        let has_trailing_dot = std::fs::read_dir(refs.join("heads"))
+            .expect("read refs")
+            .filter_map(Result::ok)
+            .any(|entry| entry.file_name() == "trailing-dot.");
 
         let issues = inspect_ref_namespace(tmp.path());
 
@@ -836,12 +840,14 @@ mod tests {
             issues.iter().any(|issue| issue.contains("heads/CON")),
             "issues: {issues:#?}"
         );
-        assert!(
-            issues
-                .iter()
-                .any(|issue| issue.contains("heads/trailing-dot.")),
-            "issues: {issues:#?}"
-        );
+        if has_trailing_dot {
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.contains("heads/trailing-dot.")),
+                "issues: {issues:#?}"
+            );
+        }
     }
 
     #[test]

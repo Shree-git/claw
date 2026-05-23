@@ -16,8 +16,8 @@ Use this checklist for every tag release and hotfix.
 ## Signed Artifact Flow
 
 - [ ] `release.yml` `host` job signed each release file with `cosign sign-blob`.
-- [ ] For each artifact, sidecars exist in the release bundle: `<artifact>.sig` and `<artifact>.pem`.
-- [ ] `verify-artifacts.yml` successfully verified all artifact/signature/certificate pairs.
+- [ ] For each artifact, a Sigstore bundle exists in the release asset set: `<artifact>.sigstore.json`.
+- [ ] `verify-artifacts.yml` successfully verified all artifact/signature bundles.
 - [ ] GitHub artifact attestations exist for release artifacts and verify with `gh attestation verify`.
 - [ ] SBOM exists in SPDX or CycloneDX form and is attached to the release.
 - [ ] Checksums verify from a clean download.

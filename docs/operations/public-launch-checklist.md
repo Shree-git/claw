@@ -58,7 +58,9 @@ Status as of 2026-05-21:
   artifacts are published. The `v0.1.2-beta.1` release tag was pushed on
   2026-05-21, but the release workflow stopped before artifact publication
   because the dist matrix command allowlist rejected the generated cargo-dist
-  installer commands.
+  installer commands. Follow-up beta tags exposed artifact-name, Unix smoke-path,
+  and Cosign bundle-signing issues; `v0.1.2-beta.5` resolved them and passed
+  release-channel verification on 2026-05-23.
   These are tracked in [issue #5](https://github.com/Shree-git/claw-vcs/issues/5)
   and [external-blockers.json](external-blockers.json).
 
@@ -96,10 +98,10 @@ evidence is recorded.
 These steps require repository owner, package registry, release, or account
 access; they cannot be completed by editing this repository alone.
 
-1. Cut the launch-hardening release tag, then verify the published release
-   artifacts. The `v0.1.2-beta.1` tag attempt is not launch-ready; rerun after
-   the release workflow allowlist fix lands on `main` and a replacement release
-   tag is cut.
+1. For each new launch-hardening release tag, verify the published release
+   artifacts. The `v0.1.2-beta.5` release is the current verified baseline; beta
+   tags `v0.1.2-beta.1` through `v0.1.2-beta.4` are recorded as failed attempts
+   in [install-verification-log.md](install-verification-log.md).
 
 ```bash
 scripts/public-launch-preflight.sh

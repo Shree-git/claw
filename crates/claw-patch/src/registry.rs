@@ -96,7 +96,8 @@ impl CodecRegistry {
                 let mut extensions = self
                     .extension_map
                     .iter()
-                    .filter_map(|(ext, codec_id)| (codec_id == id).then(|| ext.clone()))
+                    .filter(|&(_ext, codec_id)| codec_id == id)
+                    .map(|(ext, _codec_id)| ext.clone())
                     .collect::<Vec<_>>();
                 extensions.sort();
 

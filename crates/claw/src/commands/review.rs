@@ -233,7 +233,7 @@ fn intent_review_json(
     for change_id in &intent.change_ids {
         if filters
             .change
-            .is_some_and(|filter| filter != change_id.to_string())
+            .is_some_and(|filter| filter != change_id.to_string().as_str())
         {
             continue;
         }

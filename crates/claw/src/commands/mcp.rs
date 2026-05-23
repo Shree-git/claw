@@ -89,10 +89,7 @@ impl McpServer {
                 ));
             }
         };
-        let id = request.get("id").cloned();
-        let Some(id) = id else {
-            return None;
-        };
+        let id = request.get("id").cloned()?;
         let method = request.get("method").and_then(Value::as_str).unwrap_or("");
         let result = match method {
             "initialize" => Ok(self.initialize_result()),
@@ -445,9 +442,7 @@ fn object_schema(properties: Vec<(&'static str, Value)>) -> Value {
                     | "file"
                     | "left"
                     | "right"
-            ) {
-                Some(Value::String((*name).to_string()))
-            } else if *name == "goal" && value.get("type").and_then(Value::as_str) == Some("string")
+            ) || *name == "goal" && value.get("type").and_then(Value::as_str) == Some("string")
             {
                 Some(Value::String((*name).to_string()))
             } else {

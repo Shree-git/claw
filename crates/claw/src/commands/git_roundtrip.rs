@@ -113,6 +113,7 @@ struct RoundtripVerification {
     imported_depth: usize,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn print_roundtrip_result(
     args: &GitRoundtripArgs,
     git_dir: &Path,

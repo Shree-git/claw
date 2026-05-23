@@ -981,14 +981,22 @@ fn copy_file_durable(source: &Path, dest: &Path) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("path has no parent: {}", dest.display()))?;
     std::fs::create_dir_all(parent)?;
     std::fs::copy(source, dest)?;
-    std::fs::File::open(dest)?.sync_all()?;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(dest)?
+        .sync_all()?;
     sync_dir(parent)?;
     Ok(())
 }
 
 fn sync_dir(path: &Path) -> anyhow::Result<()> {
     if let Ok(dir) = std::fs::File::open(path) {
-        dir.sync_all()?;
+        match dir.sync_all() {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {}
+            Err(err) => return Err(err.into()),
+        }
     }
     Ok(())
 }

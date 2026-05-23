@@ -226,9 +226,8 @@ fn run_query(
     } else {
         for item in &matches {
             println!(
-                "{} {}={} capsule={} revision={} agent={} trust={}",
+                "{} status={} capsule={} revision={} agent={} trust={}",
                 item.evidence.name,
-                "status",
                 item.evidence.status,
                 item.capsule_hex,
                 item.revision_hex,

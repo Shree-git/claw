@@ -960,16 +960,20 @@ fn public_launch_assets_exist_and_are_upload_ready() {
     let release_verifier = read_workspace_file("scripts/verify-release-channel.sh");
     for phrase in [
         "gh release download",
+        "--clobber",
         "gh release view",
+        "local details=\"${4:-}\"",
         "targetCommitish",
         "git ls-remote --tags",
-        "claw-installer.sh",
+        "claw-vcs-installer.sh",
         "cosign verify-blob",
+        "--bundle \"$assets/$file.sigstore.json\"",
         "gh attestation verify",
         "--source-ref \"refs/tags/${tag}\"",
         "--source-digest \"$tag_commit\"",
         "--signer-workflow \"${repo}/.github/workflows/release.yml\"",
         "--deny-self-hosted-runners",
+        "cargo install --git \"https://github.com/${repo}.git\" --tag \"$tag\" claw-vcs --locked",
         "CLAW_RELEASE_VERIFY_REPORT",
         "Optional JSON report path to write on pass/fail",
         "schemaVersion: 1",
@@ -995,6 +999,16 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         assert!(
             release_verifier.contains(phrase),
             "release-channel verifier must include phrase: {phrase}"
+        );
+    }
+    for stale_name in [
+        "claw-installer.sh",
+        "claw-x86_64-unknown-linux-gnu.tar.xz",
+        "claw-aarch64-apple-darwin.tar.xz",
+    ] {
+        assert!(
+            !release_verifier.contains(stale_name),
+            "release-channel verifier must not use stale pre-app-name artifact name: {stale_name}"
         );
     }
 
@@ -1205,8 +1219,8 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         "README release-channel examples must require an explicitly verified launch tag"
     );
     assert!(
-        readme.contains("Until that tag is recorded in the install verification log"),
-        "README must tell users to stay on source install until a launch-hardening tag is verified"
+        readme.contains("verified `v0.1.2-beta.5`"),
+        "README must identify the verified launch-hardening tag"
     );
     for codec_id in [
         "rust/ast",
@@ -1277,6 +1291,12 @@ fn public_launch_assets_exist_and_are_upload_ready() {
     assert!(
         package_strategy.contains("historical artifact live; launch verification pending"),
         "package registry strategy must distinguish existing artifacts from launch-ready verification"
+    );
+    assert!(
+        package_strategy.contains("| Homebrew | verified live |")
+            && package_strategy.contains("brew install shree-git/tap/claw")
+            && package_strategy.contains("claw 0.1.2-beta.5"),
+        "package registry strategy must record the verified Homebrew tap install"
     );
 
     let helm_values = read_workspace_file("crates/claw/deploy/helm/claw/values.yaml");
@@ -1448,11 +1468,9 @@ fn public_launch_assets_exist_and_are_upload_ready() {
                 .expect("each external blocker must have an id")
         })
         .collect();
-    let expected_blocker_ids: HashSet<&str> =
-        ["release-channel-verification"].into_iter().collect();
-    assert_eq!(
-        blocker_ids, expected_blocker_ids,
-        "external blockers manifest must preserve the remaining owner-side launch blocker set"
+    assert!(
+        blocker_ids.is_empty(),
+        "external blockers manifest must be empty after release-channel verification"
     );
     for blocker in blockers {
         let id = blocker
@@ -1547,8 +1565,8 @@ fn public_launch_assets_exist_and_are_upload_ready() {
     );
     assert_eq!(
         external_pending_items,
-        vec![10],
-        "only release-channel verification should remain external pending"
+        Vec::<usize>::new(),
+        "no release-channel external pending items should remain"
     );
     assert_eq!(
         not_applicable_items,
@@ -1557,7 +1575,7 @@ fn public_launch_assets_exist_and_are_upload_ready() {
     );
     for blocker in [
         "branch-protection review/signature requirements were restored",
-        "hardened public release",
+        "v0.1.2-beta.5",
         "external-blockers.json",
     ] {
         assert!(
@@ -1621,6 +1639,30 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         release_channel_smoke.contains("--tag \"$RELEASE_TAG\""),
         "cargo install from Git smoke must install the exact release tag under validation"
     );
+    for phrase in [
+        "claw-vcs-installer.sh",
+        "claw-vcs-installer.ps1",
+        "claw-vcs-x86_64-unknown-linux-gnu.tar.xz",
+        "claw-vcs-x86_64-pc-windows-msvc.zip",
+        "claw-vcs-x86_64-pc-windows-msvc.msi",
+    ] {
+        assert!(
+            release_channel_smoke.contains(phrase),
+            "release-channel smoke must use cargo-dist artifact name: {phrase}"
+        );
+    }
+    for stale_name in [
+        "claw-installer.sh",
+        "claw-installer.ps1",
+        "claw-x86_64-unknown-linux-gnu.tar.xz",
+        "claw-x86_64-pc-windows-msvc.zip",
+        "claw-x86_64-pc-windows-msvc.msi",
+    ] {
+        assert!(
+            !release_channel_smoke.contains(stale_name),
+            "release-channel smoke must not use stale pre-app-name artifact name: {stale_name}"
+        );
+    }
 
     let large_repo_drill = read_workspace_file(".github/workflows/large-repo-drill.yml");
     for phrase in [
@@ -1650,6 +1692,7 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         "sha256sum -c sha256.sum --ignore-missing",
         "jq -e '",
         "cosign verify-blob",
+        "--bundle \"${artifact}.sigstore.json\"",
         "gh attestation verify \"$artifact\" --repo \"$GITHUB_REPOSITORY\" \\",
         "--source-digest \"$GITHUB_SHA\"",
         "--signer-workflow \"${GITHUB_REPOSITORY}/.github/workflows/release.yml\"",
@@ -1658,6 +1701,59 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         assert!(
             release_workflow.contains(phrase),
             "release workflow must pre-verify artifact provenance before upload: {phrase}"
+        );
+    }
+    for phrase in [
+        "tap_filename=\"claw.rb\"",
+        "tap_name=\"claw\"",
+        "class ClawVcs < Formula",
+        "class Claw < Formula",
+        "git rm -f --ignore-unmatch \"Formula/${filename}\"",
+        "git diff --cached --quiet -- Formula",
+        "git commit -m \"${tap_name} ${version}\"",
+    ] {
+        assert!(
+            release_workflow.contains(phrase),
+            "release workflow must publish the public Homebrew formula name: {phrase}"
+        );
+    }
+    assert!(
+        !release_workflow.contains(
+            "announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases"
+        ),
+        "Homebrew tap publishing must not skip launch beta releases"
+    );
+    for phrase in [
+        "claw-vcs-x86_64-unknown-linux-gnu.tar.xz",
+        "claw-vcs-aarch64-apple-darwin.tar.xz",
+        "claw-vcs-x86_64-pc-windows-msvc.zip",
+        "claw-vcs-x86_64-pc-windows-msvc.msi",
+        "smoke_root=\"$PWD/smoke-archive\"",
+        "repo_dir=\"$smoke_root/repo\"",
+        "cd \"$repo_dir\"",
+    ] {
+        assert!(
+            release_workflow.contains(phrase),
+            "release artifact smoke gate must include expected smoke detail: {phrase}"
+        );
+    }
+    assert!(
+        release_workflow.lines().any(|line| {
+            line.contains("find \"$smoke_root\"")
+                && line.contains("-type f")
+                && line.contains("-name claw")
+        }),
+        "release artifact smoke gate must find the claw binary under the absolute smoke root"
+    );
+    for stale_name in [
+        "claw-x86_64-unknown-linux-gnu.tar.xz",
+        "claw-aarch64-apple-darwin.tar.xz",
+        "claw-x86_64-pc-windows-msvc.zip",
+        "claw-x86_64-pc-windows-msvc.msi",
+    ] {
+        assert!(
+            !release_workflow.contains(stale_name),
+            "release artifact smoke gate must not use stale pre-app-name artifact name: {stale_name}"
         );
     }
     let verify_artifacts_workflow = read_workspace_file(".github/workflows/verify-artifacts.yml");

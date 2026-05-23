@@ -2469,12 +2469,12 @@ fn mcp_server_lists_and_calls_claw_tools_over_stdio() {
     let repo = env.init_repo("mcp-stdio");
     let binary = support::claw_binary();
 
-    let mut server = Command::new(&binary)
+    let mut server = Command::new(binary)
         .current_dir(&repo)
         .arg("mcp")
         .arg("serve")
         .arg("--claw-binary")
-        .arg(&binary)
+        .arg(binary)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()

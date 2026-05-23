@@ -523,8 +523,8 @@ fn test_partial_clone_filter() {
     assert!(!codec_filter.matches_object(&store, &patch_rs_id));
     assert!(codec_filter.matches_object(&store, &patch_json_id));
 
-    // Blobs always pass
-    assert!(path_filter.matches_object(&store, &blob_id));
+    // Path filters are rooted through matching patches/revisions; standalone blobs do not match.
+    assert!(!path_filter.matches_object(&store, &blob_id));
 }
 
 // === Test 9: Git export determinism ===

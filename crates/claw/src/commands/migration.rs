@@ -603,9 +603,7 @@ fn branch_name_from_record(value: &Value) -> Option<String> {
 }
 
 fn issue_number_from_record(value: &Value) -> Option<String> {
-    if !value.get("title").is_some() {
-        return None;
-    }
+    value.get("title")?;
     first_string_field(value, &["number", "iid", "id"]).or_else(|| {
         value
             .get("number")

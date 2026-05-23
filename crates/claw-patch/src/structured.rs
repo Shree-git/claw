@@ -458,8 +458,7 @@ fn detect_json_or_yaml(input: &[u8]) -> StructuredFormat {
     let trimmed = input
         .iter()
         .copied()
-        .skip_while(|byte| byte.is_ascii_whitespace())
-        .next();
+        .find(|byte| !byte.is_ascii_whitespace());
     match trimmed {
         Some(b'{') | Some(b'[') => StructuredFormat::Json,
         _ => StructuredFormat::Yaml,

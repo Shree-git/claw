@@ -242,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-core"
-version = "0.1.2-beta.1"
+version = "0.1.2-beta.5"
 dependencies = [
  "blake3",
  "bytes",
@@ -262,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-crypto"
-version = "0.1.2-beta.1"
+version = "0.1.2-beta.5"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -278,29 +278,32 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-git"
-version = "0.1.2-beta.1"
+version = "0.1.2-beta.5"
 dependencies = [
  "claw-vcs-core",
  "claw-vcs-store",
  "flate2",
  "hex",
+ "tempfile",
  "thiserror",
 ]
 
 [[package]]
 name = "claw-vcs-patch"
-version = "0.1.2-beta.1"
+version = "0.1.2-beta.5"
 dependencies = [
  "claw-vcs-core",
  "serde",
  "serde_json",
+ "serde_yaml",
  "similar",
  "thiserror",
+ "toml",
 ]
 
 [[package]]
 name = "claw-vcs-policy"
-version = "0.1.2-beta.1"
+version = "0.1.2-beta.5"
 dependencies = [
  "claw-vcs-core",
  "serde",
@@ -310,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-store"
-version = "0.1.2-beta.1"
+version = "0.1.2-beta.5"
 dependencies = [
  "blake3",
  "claw-vcs-core",
@@ -326,7 +329,7 @@ dependencies = [
 
 [[package]]
 name = "claw-vcs-sync"
-version = "0.1.2-beta.1"
+version = "0.1.2-beta.5"
 dependencies = [
  "async-trait",
  "base64",
@@ -1760,6 +1763,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2242,6 +2258,12 @@ dependencies = [
  "crypto-common",
  "subtle",
 ]
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

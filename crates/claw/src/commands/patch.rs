@@ -580,7 +580,7 @@ fn patch_workbench_report(
     let analysis = workbench_analysis(
         left,
         right,
-        &classification,
+        classification,
         reordered.is_some(),
         &left_inverse,
         &right_inverse,

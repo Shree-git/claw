@@ -665,6 +665,7 @@ struct AttestationEvidenceResult {
     report: serde_json::Value,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn attestation_evidence_result(
     path: &std::path::Path,
     bytes: &[u8],
@@ -706,11 +707,7 @@ fn attestation_evidence_result(
     if let Some(build_type) = &predicate_check.build_type {
         refs.push(format!("buildType:{build_type}"));
     }
-    let summary = if subject_check.matched && predicate_check.matched {
-        format!("{}; {}", subject_check.summary, predicate_check.summary)
-    } else {
-        format!("{}; {}", subject_check.summary, predicate_check.summary)
-    };
+    let summary = format!("{}; {}", subject_check.summary, predicate_check.summary);
 
     let evidence = Evidence {
         name: name.to_string(),

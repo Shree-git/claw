@@ -16,7 +16,7 @@ members = [
 
 [workspace.package]
 edition = "2021"
-version = "0.1.2-beta.1"
+version = "0.1.2-beta.5"
 license = "MIT"
 authors = ["Claw contributors"]
 description = "Claw VCS: intent-native, agent-native version control."
@@ -104,15 +104,15 @@ proptest = "1.6"
 criterion = "0.5"
 
 # Internal crates
-claw-core = { package = "claw-vcs-core", version = "0.1.2-beta.1", path = "crates/claw-core" }
-claw-store = { package = "claw-vcs-store", version = "0.1.2-beta.1", path = "crates/claw-store" }
-claw-patch = { package = "claw-vcs-patch", version = "0.1.2-beta.1", path = "crates/claw-patch" }
-claw-merge = { package = "claw-vcs-merge", version = "0.1.2-beta.1", path = "crates/claw-merge" }
-claw-crypto = { package = "claw-vcs-crypto", version = "0.1.2-beta.1", path = "crates/claw-crypto" }
-claw-policy = { package = "claw-vcs-policy", version = "0.1.2-beta.1", path = "crates/claw-policy" }
-claw-sync = { package = "claw-vcs-sync", version = "0.1.2-beta.1", path = "crates/claw-sync" }
-claw-git = { package = "claw-vcs-git", version = "0.1.2-beta.1", path = "crates/claw-git" }
-claw-agent-sdk = { package = "claw-vcs-agent-sdk", version = "0.1.2-beta.1", path = "crates/claw-agent-sdk" }
+claw-core = { package = "claw-vcs-core", version = "0.1.2-beta.5", path = "crates/claw-core" }
+claw-store = { package = "claw-vcs-store", version = "0.1.2-beta.5", path = "crates/claw-store" }
+claw-patch = { package = "claw-vcs-patch", version = "0.1.2-beta.5", path = "crates/claw-patch" }
+claw-merge = { package = "claw-vcs-merge", version = "0.1.2-beta.5", path = "crates/claw-merge" }
+claw-crypto = { package = "claw-vcs-crypto", version = "0.1.2-beta.5", path = "crates/claw-crypto" }
+claw-policy = { package = "claw-vcs-policy", version = "0.1.2-beta.5", path = "crates/claw-policy" }
+claw-sync = { package = "claw-vcs-sync", version = "0.1.2-beta.5", path = "crates/claw-sync" }
+claw-git = { package = "claw-vcs-git", version = "0.1.2-beta.5", path = "crates/claw-git" }
+claw-agent-sdk = { package = "claw-vcs-agent-sdk", version = "0.1.2-beta.5", path = "crates/claw-agent-sdk" }
 
 # The profile that 'dist' will build with
 [profile.dist]

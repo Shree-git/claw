@@ -17,13 +17,13 @@ one downloaded asset without downloading every file named in `sha256.sum`, check
 only that asset's line:
 
 ```bash
-grep '  claw-x86_64-unknown-linux-gnu.tar.xz$' sha256.sum | sha256sum -c -
+grep '  claw-vcs-x86_64-unknown-linux-gnu.tar.xz$' sha256.sum | sha256sum -c -
 ```
 
 On macOS:
 
 ```bash
-grep '  claw-x86_64-unknown-linux-gnu.tar.xz$' sha256.sum | shasum -a 256 -c -
+grep '  claw-vcs-x86_64-unknown-linux-gnu.tar.xz$' sha256.sum | shasum -a 256 -c -
 ```
 
 If you downloaded the full release asset set, `sha256sum -c sha256.sum` or
@@ -31,15 +31,14 @@ If you downloaded the full release asset set, `sha256sum -c sha256.sum` or
 
 ## Cosign Blob Signatures
 
-When a release provides `.sig` and certificate material:
+When a release provides Sigstore bundle material:
 
 ```bash
 cosign verify-blob \
-  --signature ./claw-x86_64-unknown-linux-gnu.tar.xz.sig \
-  --certificate ./claw-x86_64-unknown-linux-gnu.tar.xz.pem \
+  --bundle ./claw-vcs-x86_64-unknown-linux-gnu.tar.xz.sigstore.json \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp '^https://github.com/Shree-git/(claw|claw-vcs)/\.github/workflows/release\.yml@refs/tags/vX.Y.Z$' \
-  ./claw-x86_64-unknown-linux-gnu.tar.xz
+  ./claw-vcs-x86_64-unknown-linux-gnu.tar.xz
 ```
 
 The certificate issuer must be GitHub Actions OIDC, and the certificate
@@ -50,7 +49,7 @@ identity must point at this repository's workflow on the exact release tag.
 When a release provides GitHub artifact attestations:
 
 ```bash
-gh attestation verify ./claw-x86_64-unknown-linux-gnu.tar.xz --repo Shree-git/claw-vcs
+gh attestation verify ./claw-vcs-x86_64-unknown-linux-gnu.tar.xz --repo Shree-git/claw-vcs
 ```
 
 Verify the attestation references the expected repository, commit SHA, workflow, and tag.
@@ -58,11 +57,11 @@ For launch releases, verify both provenance and SBOM attestations by pinning
 predicate types:
 
 ```bash
-gh attestation verify ./claw-x86_64-unknown-linux-gnu.tar.xz \
+gh attestation verify ./claw-vcs-x86_64-unknown-linux-gnu.tar.xz \
   --repo Shree-git/claw-vcs \
   --predicate-type https://slsa.dev/provenance/v1
 
-gh attestation verify ./claw-x86_64-unknown-linux-gnu.tar.xz \
+gh attestation verify ./claw-vcs-x86_64-unknown-linux-gnu.tar.xz \
   --repo Shree-git/claw-vcs \
   --predicate-type https://spdx.dev/Document/v2.3
 ```

@@ -1,19 +1,7 @@
 {
   "schemaVersion": 1,
-  "lastUpdated": "2026-05-21",
+  "lastUpdated": "2026-05-23",
   "repository": "Shree-git/claw-vcs",
   "branch": "main",
-  "blockers": [
-    {
-      "id": "release-channel-verification",
-      "category": "release",
-      "ownerAction": true,
-      "requiredBefore": "documenting binary/install channels as launch-ready",
-      "description": "Cut the hardened launch release and verify archives, installers, signatures, attestations, SBOM, Homebrew, MSI, and cargo install from clean environments. The v0.1.2-beta.1 tag was pushed on 2026-05-21, but the release workflow stopped before artifact publication because the dist matrix command allowlist rejected the generated cargo-dist installer commands.",
-      "verification": [
-        "CLAW_RELEASE_VERIFY_REPORT=release-verification/<launch-tag>.json scripts/verify-release-channel.sh <launch-tag>",
-        "CLAW_VERIFY_HOMEBREW=1 scripts/verify-release-channel.sh <launch-tag>"
-      ]
-    }
-  ]
+  "blockers": []
 }

@@ -292,10 +292,7 @@ fn admin_backup_verify_and_rollback_restore_corrupted_metadata() {
     let created_json = created.stdout_json();
     assert_eq!(created_json["schema_version"], 1);
     assert_eq!(created_json["action"], "backup.create");
-    assert_eq!(
-        created_json["file_count"].as_u64().unwrap_or_default() > 0,
-        true
-    );
+    assert!(created_json["file_count"].as_u64().unwrap_or_default() > 0);
     let backup_id = created_json["backup_id"]
         .as_str()
         .expect("backup id")
@@ -344,10 +341,7 @@ fn admin_backup_verify_and_rollback_restore_corrupted_metadata() {
     assert_eq!(plan_json["action"], "rollback.plan");
     assert_eq!(plan_json["backup_id"], backup_id);
     assert_eq!(plan_json["verified"], true);
-    assert_eq!(
-        plan_json["restore_file_count"].as_u64().unwrap_or_default() > 0,
-        true
-    );
+    assert!(plan_json["restore_file_count"].as_u64().unwrap_or_default() > 0);
 
     let executed = env.run_ok(
         &repo,

@@ -2,6 +2,78 @@
 
 This log records concrete install-channel checks for the public launch backlog.
 
+## 2026-05-23
+
+Environment:
+
+```text
+GitHub Actions release workflow
+Darwin arm64 local release-channel verifier
+```
+
+### v0.1.2-beta.5 Release Verification
+
+Command shape:
+
+```bash
+git tag -a v0.1.2-beta.5 -m "Claw VCS v0.1.2-beta.5" cd4915abe2ae11eb62d6250d615394e65bb350dd
+git push origin v0.1.2-beta.5
+CLAW_RELEASE_VERIFY_WORKDIR=/tmp/claw-release-verification/v0.1.2-beta.5 \
+  CLAW_RELEASE_VERIFY_REPORT=/tmp/claw-release-verification/v0.1.2-beta.5.json \
+  scripts/verify-release-channel.sh v0.1.2-beta.5
+```
+
+Observed result:
+
+```text
+Release workflow run: https://github.com/Shree-git/claw-vcs/actions/runs/26319611049
+quality: passed
+security-audit-gate: passed
+compatibility-matrix-gate: passed on ubuntu-22.04, macos-latest, and windows-latest
+build-local-artifacts: passed for every target
+build-global-artifacts: passed
+contract-tests-gate: passed
+artifact-smoke-gate: passed on ubuntu-22.04, macos-latest, and windows-latest
+host: passed signing, bundle verification, attestations, and GitHub release creation
+GitHub release: https://github.com/Shree-git/claw-vcs/releases/tag/v0.1.2-beta.5
+release-channel verifier: passed on Darwin arm64
+```
+
+Status: pass for release-channel verification. The published release includes
+archive, installer, checksum, SBOM, metadata, source, manifest, MSI, and
+Homebrew formula assets with Sigstore bundle sidecars. Local verification
+checked the Darwin arm64 archive, shell installer, `cargo install --git`,
+Cosign bundle verification, GitHub provenance/SBOM attestations, checksums,
+SBOM readability, and release metadata. Windows installer/MSI smoke remains
+covered by `.github/workflows/release-channel-smoke.yml`.
+
+The release-channel blocker is closed for `v0.1.2-beta.5`.
+
+### v0.1.2-beta.5 Homebrew Tap Verification
+
+Command shape:
+
+```bash
+brew install shree-git/tap/claw
+claw --version
+CLAW_RELEASE_VERIFY_WORKDIR=/tmp/claw-release-verification/v0.1.2-beta.5-homebrew-live \
+  CLAW_RELEASE_VERIFY_REPORT=/tmp/claw-release-verification/v0.1.2-beta.5-homebrew-live.json \
+  CLAW_VERIFY_HOMEBREW=1 \
+  scripts/verify-release-channel.sh v0.1.2-beta.5
+```
+
+Observed result:
+
+```text
+brew install shree-git/tap/claw: installed Formula claw (0.1.2-beta.5)
+claw --version: claw 0.1.2-beta.5
+release-channel verifier with CLAW_VERIFY_HOMEBREW=1: passed
+report: /tmp/claw-release-verification/v0.1.2-beta.5-homebrew-live.json
+```
+
+Status: pass. `Formula/claw.rb` in `shree-git/homebrew-tap` now points at the
+launch-hardening release assets and checksums.
+
 ## 2026-05-21
 
 Environment:
@@ -41,6 +113,116 @@ irm https://github.com/axodotdev/cargo-dist/releases/download/v0.30.3/cargo-dist
 
 The release-channel blocker remains open until the workflow allowlist fix lands
 on `main`, a replacement launch tag is cut, artifacts are published, and
+`scripts/verify-release-channel.sh <launch-tag>` passes from a clean
+environment.
+
+## 2026-05-22
+
+Environment:
+
+```text
+GitHub Actions release workflow
+```
+
+### v0.1.2-beta.2 Release Attempt
+
+Command shape:
+
+```bash
+git tag -a v0.1.2-beta.2 -m "Claw VCS v0.1.2-beta.2" b32200badb59c31fd72467a3d3889b696a2c7531
+git push origin v0.1.2-beta.2
+```
+
+Observed result:
+
+```text
+Release workflow run: https://github.com/Shree-git/claw-vcs/actions/runs/26316363286
+quality: passed
+security-audit-gate: passed
+compatibility-matrix-gate: passed on ubuntu-22.04, macos-latest, and windows-latest
+build-local-artifacts: passed for every target
+build-global-artifacts: passed
+contract-tests-gate: passed
+artifact-smoke-gate: failed on ubuntu-22.04, macos-latest, and windows-latest
+GitHub release: not created
+```
+
+Status: fail for release-channel verification. The workflow built the expected
+cargo-dist artifacts, but the artifact smoke gates looked for stale pre-app-name
+asset filenames like `claw-x86_64-unknown-linux-gnu.tar.xz` and
+`claw-x86_64-pc-windows-msvc.zip` instead of the published `claw-vcs-*` asset
+names.
+
+The release-channel blocker remains open until the artifact-name fix lands on
+`main`, a replacement launch tag is cut, artifacts are published, and
+`scripts/verify-release-channel.sh <launch-tag>` passes from a clean
+environment.
+
+### v0.1.2-beta.3 Release Attempt
+
+Command shape:
+
+```bash
+git tag -a v0.1.2-beta.3 -m "Claw VCS v0.1.2-beta.3" 4954f75328d6d715b1414b1f5d09c7d5bb276275
+git push origin v0.1.2-beta.3
+```
+
+Observed result:
+
+```text
+Release workflow run: https://github.com/Shree-git/claw-vcs/actions/runs/26317553294
+quality: passed
+security-audit-gate: passed
+compatibility-matrix-gate: passed on ubuntu-22.04, macos-latest, and windows-latest
+build-local-artifacts: passed for every target
+build-global-artifacts: passed
+contract-tests-gate: passed
+artifact-smoke-gate: passed on windows-latest, failed on ubuntu-22.04 and macos-latest
+GitHub release: not created
+```
+
+Status: fail for release-channel verification. The Unix archive smoke gate found
+and executed the extracted `claw` binary, then changed into the smoke repository
+and reused the binary as a relative path. The next release attempt must keep the
+extracted binary path absolute before changing directories.
+
+The release-channel blocker remains open until the Unix artifact smoke fix lands
+on `main`, a replacement launch tag is cut, artifacts are published, and
+`scripts/verify-release-channel.sh <launch-tag>` passes from a clean
+environment.
+
+### v0.1.2-beta.4 Release Attempt
+
+Command shape:
+
+```bash
+git tag -a v0.1.2-beta.4 -m "Claw VCS v0.1.2-beta.4" 94d93c90fe2bb57b1d60bf864d28903c7ed90678
+git push origin v0.1.2-beta.4
+```
+
+Observed result:
+
+```text
+Release workflow run: https://github.com/Shree-git/claw-vcs/actions/runs/26318558231
+quality: passed
+security-audit-gate: passed
+compatibility-matrix-gate: passed on ubuntu-22.04, macos-latest, and windows-latest
+build-local-artifacts: passed for every target
+build-global-artifacts: passed
+contract-tests-gate: passed
+artifact-smoke-gate: passed on ubuntu-22.04, macos-latest, and windows-latest
+host: failed at Sign release artifacts
+GitHub release: not created
+```
+
+Status: fail for release-channel verification. The release workflow reached the
+publish host job, but the installed Cosign version ignored the deprecated
+`--output-signature` and `--output-certificate` flags under its current bundle
+format and failed while signing release metadata. The next release attempt must
+emit and verify Sigstore bundle sidecars.
+
+The release-channel blocker remains open until the Cosign bundle signing fix
+lands on `main`, a replacement launch tag is cut, artifacts are published, and
 `scripts/verify-release-channel.sh <launch-tag>` passes from a clean
 environment.
 
@@ -163,8 +345,7 @@ CLAW_RELEASE_VERIFY_REPORT=release-verification/<launch-tag>-unix.json scripts/v
 - Shell installer from the next launch-hardening release.
 - PowerShell installer on Windows.
 - Windows MSI on Windows.
-- Homebrew formula after the tap points at the launch-hardening release.
-- `cargo install --git https://github.com/shree-git/claw-vcs.git --tag <launch-tag> --package claw-vcs --locked` for the next launch-hardening release tag.
+- `cargo install --git https://github.com/shree-git/claw-vcs.git --tag <launch-tag> claw-vcs --locked` for the next launch-hardening release tag.
 
 ## Launch-Hardening Release Evidence Template
 
