@@ -3,6 +3,7 @@ use claw_core::hash::content_hash;
 use claw_core::id::ObjectId;
 use claw_core::object::Object;
 
+use crate::fs_util;
 use crate::layout::RepoLayout;
 use crate::StoreError;
 
@@ -74,9 +75,6 @@ impl PackWriter {
         let pack_path = layout.packs_dir().join(format!("{hash_hex}.clwpack"));
         let idx_path = layout.packs_dir().join(format!("{hash_hex}.idx"));
 
-        // Write pack file
-        std::fs::write(&pack_path, &data)?;
-
         // Write separate index file
         let mut idx_data = Vec::new();
         idx_data.extend_from_slice(IDX_MAGIC);
@@ -85,7 +83,11 @@ impl PackWriter {
             idx_data.extend_from_slice(id.as_bytes());
             idx_data.extend_from_slice(&offset.to_le_bytes());
         }
-        std::fs::write(&idx_path, &idx_data)?;
+
+        // Publish the pack before its index, so a crash cannot leave an index
+        // pointing at a missing pack.
+        fs_util::write_atomic(&pack_path, &data)?;
+        fs_util::write_atomic(&idx_path, &idx_data)?;
 
         Ok((pack_path, idx_path))
     }
@@ -115,8 +117,6 @@ impl PackWriter {
             index_entries.push((*id, offset));
         }
 
-        std::fs::write(&pack_path, &data)?;
-
         // Write separate .idx
         let idx_path = layout.packs_dir().join(format!("{pack_name}.idx"));
         let mut idx_data = Vec::new();
@@ -126,7 +126,11 @@ impl PackWriter {
             idx_data.extend_from_slice(id.as_bytes());
             idx_data.extend_from_slice(&offset.to_le_bytes());
         }
-        std::fs::write(&idx_path, &idx_data)?;
+
+        // Publish the pack before its index, so a crash cannot leave an index
+        // pointing at a missing pack.
+        fs_util::write_atomic(&pack_path, &data)?;
+        fs_util::write_atomic(&idx_path, &idx_data)?;
 
         Ok(pack_path)
     }

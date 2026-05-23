@@ -1,0 +1,21 @@
+{
+  "name": "@claw-vcs/agent-sdk",
+  "version": "0.1.2-beta.1",
+  "description": "TypeScript helpers for agents that drive Claw VCS",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.0"
+  }
+}

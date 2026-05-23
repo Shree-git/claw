@@ -23,6 +23,12 @@ path-level change data.
 
 ```json
 {
+  "schema_version": 1,
+  "action": "diff",
+  "from": "heads/main",
+  "to": "working_tree",
+  "path_filter": null,
+  "change_count": 1,
   "changes": [
     {
       "path": "README.md",

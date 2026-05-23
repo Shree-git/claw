@@ -34,7 +34,7 @@ claw init
 3. Configure daemon auth profile token:
 
 ```bash
-claw auth token set "<strong-random-token>" --profile default
+printf '%s\n' "$CLAW_TOKEN" | claw auth token set --stdin --profile default
 ```
 
 4. Run preflight:

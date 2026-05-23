@@ -53,9 +53,14 @@ claw integrate --right heads/dark-mode
 ## Primary Routes
 
 - Static landing entrypoint: `docs/index.html`
+- Browser playground: `docs/playground/index.html`
+- Beginner: `docs/persona/beginner.md`
+- Platform operator: `docs/persona/platform-operator.md`
+- Agent developer: `docs/persona/agent-developer.md`
+- Security reviewer: `docs/persona/security-reviewer.md`
+- VCS nerd cave: `docs/persona/vcs-nerd-cave.md`
 - New contributor: `docs/persona/contributor.md`
 - Agent integrator: `docs/persona/agent-integrator.md`
-- Platform operator: `docs/persona/platform-operator.md`
 - Demo script: `examples/basic-demo/scripts/demo.sh`
 - Demo media: `examples/demo-media/`
 - Social preview: `docs/assets/social-preview.png` (source SVG: `docs/assets/social-preview.svg`)

@@ -6,7 +6,7 @@ Claw VCS uses `claw` as the CLI name and `claw-vcs` as the public repository/pro
 |---|---|---|
 | GitHub Releases | historical artifact live; launch verification pending | `v0.1.0` exists with archives, checksums, signatures, installers, and MSI, but it predates the current launch-hardening checks. A new launch-hardening release still needs clean-environment verification before release archives are documented as launch-ready. |
 | Homebrew | tap live; launch verification pending | Formula exists as `Formula/claw.rb` in `shree-git/homebrew-tap`; Homebrew exposes that repository as tap `shree-git/tap`, so install with `brew install shree-git/tap/claw` only after the formula points at the launch-hardening release and passes clean-host verification. Homebrew core did not have a `claw` formula in the local `brew info claw` check on 2026-05-11. |
-| crates.io | planned | Checked on 2026-05-12: `claw-vcs` and the `claw-vcs-*` internal package names returned 404 from the crates.io crate API, while `claw`, `claw-core`, `claw-crypto`, and `claw-sync` are occupied by unrelated crates. The `claw-vcs-core` publish dry-run packaged and verified successfully; dependent packages dry-run only after their internal registry dependencies are live. Reserve or publish the full package set before documenting a crates.io install path. |
+| crates.io | published; launch verification pending | Checked on 2026-05-20: `claw-vcs` and the `claw-vcs-*` internal package names exist on crates.io at `0.1.1` with verified owner `Shree-git`. Keep broad install guidance gated on release-channel verification and the install verification log. |
 | WinGet | planned | Planned package id: `ShreeGit.ClawVCS`; checked on 2026-05-11 and no manifest path exists in `microsoft/winget-pkgs`. First publish requires manual PR to `microsoft/winget-pkgs`. |
 | Windows MSI | historical artifact live; launch verification pending | `v0.1.0` MSI exists; verify the launch-hardening release on Windows before treating MSI install as launch-ready. |
 | Shell installer | historical artifact live; launch verification pending | `v0.1.0` shell installer exists; keep non-pipe manual download path documented and verify the launch-hardening release before treating installer output as launch-ready. |
@@ -18,12 +18,14 @@ Claw VCS uses `claw` as the CLI name and `claw-vcs` as the public repository/pro
 
 Before broad announcement, verify every launch channel from a clean machine or container and record expected command output in release notes.
 
-Latest preflight result on 2026-05-12: repository, branch-protection,
-security-setting, Homebrew tap, and social-preview asset checks passed;
-two low `rand` Dependabot alerts were still open on `main`, `claw-vcs` and the
-`claw-vcs-*` internal package names were still unreserved on crates.io, WinGet
-remained planned, GitHub social preview upload was not complete, and GitHub
-Pages was not configured.
+Latest strict preflight result on 2026-05-20: repository identity, visibility,
+topics, security settings, Dependabot alert state, crates.io owner checks,
+Homebrew tap, social preview asset, GitHub social preview upload, GitHub Pages
+configuration, and completed name-clearance evidence passed. WinGet remains
+planned. Branch-protection hardening drift was fixed on 2026-05-21 by
+restoring approving review, stale approval dismissal, code-owner review,
+last-push approval, and signed commits on `main`. Launch channel guidance still
+requires a new launch-hardening release and clean-environment verification.
 
 Maintainer preflight:
 
@@ -35,8 +37,8 @@ CLAW_PREFLIGHT_STRICT=1 CLAW_PREFLIGHT_CRATESIO_OWNER=<owner> scripts/public-lau
 The preflight checks package-name signals, repository settings, branch
 protection, open Dependabot alert state, the local social preview asset, GitHub
 social preview upload state, and optional GitHub Pages state. It is expected to
-fail until launch-gating external actions, such as merging dependency fixes and
-reserving or publishing the `claw-vcs` crates.io package set, are complete. Set
+fail until launch-gating external actions, such as branch-protection hardening
+and release-channel verification, are complete. Set
 `CLAW_PREFLIGHT_REQUIRE_PAGES=1` when the launch includes a hosted landing page.
 In strict mode, set `CLAW_PREFLIGHT_CRATESIO_OWNER` or
 `CLAW_CRATESIO_EXPECTED_OWNER` so any live crates.io package names are verified
@@ -58,10 +60,10 @@ claw-vcs
 
 The internal packages publish under `claw-vcs-*` names while preserving Rust
 crate imports such as `claw_core` and dependency aliases such as `claw-core`.
-`scripts/publish-cratesio.sh --package claw-vcs-core` is expected to pass before
-reservation; it passed on 2026-05-12 and stopped before upload as expected in
-dry-run mode. Later packages resolve earlier `claw-vcs-*` crates from the
-registry during dry-run, so verify each one after its dependencies are live.
+`scripts/publish-cratesio.sh --package claw-vcs-core` passed before
+reservation on 2026-05-12 and stopped before upload as expected in dry-run mode.
+The full `0.1.1` package set was visible on crates.io with owner `Shree-git` in
+the 2026-05-20 strict preflight.
 The default dry-run checks packages whose internal registry dependencies are
 already live and skips the rest with an explicit dependency list; explicit
 `--package` and `--start-at` dry-runs fail fast when their prerequisites are not

@@ -13,6 +13,7 @@ Checks public-launch state that depends on GitHub or package-registry access:
   - completed name-clearance evidence in strict mode
   - open Dependabot alert state
   - package-name availability/reservation signals
+  - optional repository health evidence capture
   - local social preview asset readiness and GitHub upload state
 
 This script is intentionally launch-gating. It may fail until maintainer-owned
@@ -25,6 +26,8 @@ Environment:
   CLAW_PREFLIGHT_STRICT          Set to 1 for broad-announcement readiness
   CLAW_PREFLIGHT_NAME_EVIDENCE   Completed name-clearance evidence markdown
   CLAW_PREFLIGHT_CRATESIO_OWNER  Expected crates.io owner login/team id for reserved packages
+  CLAW_PREFLIGHT_HEALTH_REPO     Optional Claw repository path to verify
+  CLAW_PREFLIGHT_HEALTH_REPORT   Repository health JSON report path
 USAGE
 }
 
@@ -39,6 +42,8 @@ require_pages="${CLAW_PREFLIGHT_REQUIRE_PAGES:-0}"
 strict="${CLAW_PREFLIGHT_STRICT:-0}"
 name_evidence="${CLAW_PREFLIGHT_NAME_EVIDENCE:-docs/operations/name-clearance-evidence.md}"
 cratesio_owner="${CLAW_PREFLIGHT_CRATESIO_OWNER:-${CLAW_CRATESIO_EXPECTED_OWNER:-}}"
+health_repo="${CLAW_PREFLIGHT_HEALTH_REPO:-}"
+health_report="${CLAW_PREFLIGHT_HEALTH_REPORT:-release-verification/repo-health.json}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd "$script_dir/.." && pwd -P)"
 
@@ -179,6 +184,24 @@ sys.exit(1)
   fi
 }
 
+check_repo_health_evidence() {
+  local output
+
+  if [[ -z "$health_repo" ]]; then
+    printf 'INFO: repository health evidence not requested; set CLAW_PREFLIGHT_HEALTH_REPO=<repo> to archive doctor/repair JSON evidence\n'
+    return 0
+  fi
+
+  if output="$(
+    CLAW_HEALTH_REPORT="$health_report" \
+      "$repo_root/scripts/verify-repo-health.sh" "$health_repo" 2>&1
+  )"; then
+    pass "repository health evidence verified via scripts/verify-repo-health.sh: $health_report"
+  else
+    fail "repository health evidence failed via scripts/verify-repo-health.sh: $output"
+  fi
+}
+
 if ! gh auth status -h github.com >/dev/null 2>&1; then
   fail "gh must be authenticated to inspect repository settings"
 fi
@@ -190,6 +213,7 @@ fi
 echo "Checking public-launch state for $repo ($branch)"
 
 check_local_ignored_hygiene
+check_repo_health_evidence
 
 name_with_owner="$(gh repo view "$repo" --json nameWithOwner --jq '.nameWithOwner')"
 is_private="$(gh repo view "$repo" --json isPrivate --jq '.isPrivate')"

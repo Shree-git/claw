@@ -13,8 +13,13 @@ use crate::auth_store;
 use crate::commands::RuntimeOptions;
 use crate::config::{self, ClawConfigV1};
 
+const ADMIN_JSON_SCHEMA_VERSION: u8 = 1;
+
 #[derive(Args)]
 pub struct AdminArgs {
+    /// Output command results as JSON
+    #[arg(long, global = true)]
+    json: bool,
     #[command(subcommand)]
     command: AdminCommand,
 }
@@ -100,6 +105,16 @@ struct BackupEntry {
 }
 
 #[derive(Serialize)]
+struct BackupVerification {
+    backup_id: String,
+    manifest_path: String,
+    snapshot_path: String,
+    file_count: usize,
+    total_bytes: u64,
+    verified: bool,
+}
+
+#[derive(Serialize)]
 struct LedgerEntry {
     timestamp_ms: u64,
     action: String,
@@ -109,35 +124,39 @@ struct LedgerEntry {
 
 #[derive(Serialize)]
 struct SupportBundle {
+    schema_version: u8,
+    action: &'static str,
     request_id: String,
     created_at_ms: u64,
     repo_root: String,
-    config: ClawConfigV1,
+    config: serde_json::Value,
+    redactions: Vec<String>,
     head: Option<String>,
     refs_count: usize,
     latest_backup_id: Option<String>,
 }
 
 pub fn run(args: AdminArgs, runtime: &RuntimeOptions) -> anyhow::Result<()> {
+    let json = args.json;
     match args.command {
-        AdminCommand::Preflight => run_preflight(runtime),
+        AdminCommand::Preflight => run_preflight(runtime, json),
         AdminCommand::Backup { command } => match command {
-            BackupCommand::Create => run_backup_create(),
-            BackupCommand::Verify { backup_id } => run_backup_verify(backup_id),
+            BackupCommand::Create => run_backup_create(json),
+            BackupCommand::Verify { backup_id } => run_backup_verify(backup_id, json),
         },
         AdminCommand::Migrate { command } => match command {
-            MigrateCommand::Plan => run_migrate_plan(),
-            MigrateCommand::Apply { dry_run } => run_migrate_apply(dry_run),
+            MigrateCommand::Plan => run_migrate_plan(json),
+            MigrateCommand::Apply { dry_run } => run_migrate_apply(dry_run, json),
         },
         AdminCommand::Rollback { command } => match command {
-            RollbackCommand::Plan { backup_id } => run_rollback_plan(backup_id),
-            RollbackCommand::Execute { backup_id } => run_rollback_execute(backup_id),
+            RollbackCommand::Plan { backup_id } => run_rollback_plan(backup_id, json),
+            RollbackCommand::Execute { backup_id } => run_rollback_execute(backup_id, json),
         },
-        AdminCommand::SupportBundle { out } => run_support_bundle(out),
+        AdminCommand::SupportBundle { out } => run_support_bundle(out, json),
     }
 }
 
-fn run_preflight(_runtime: &RuntimeOptions) -> anyhow::Result<()> {
+fn run_preflight(_runtime: &RuntimeOptions, json: bool) -> anyhow::Result<()> {
     const DISK_FREE_WARN_KIB: u64 = 1_048_576; // 1 GiB
     const DISK_FREE_FAIL_KIB: u64 = 262_144; // 256 MiB
     const NOFILE_WARN_SOFT_LIMIT: u64 = 8_192;
@@ -252,26 +271,30 @@ fn run_preflight(_runtime: &RuntimeOptions) -> anyhow::Result<()> {
     }
 
     let selected_profile = config::default_profile(&cfg).to_string();
-    if cfg.auth.require_auth_for_daemon
-        && auth_store::resolve_access_token(Some(&selected_profile)).is_none()
-    {
-        checks.push(CheckResult::warn(
-            "daemon auth token",
-            format!(
-                "no auth token found for profile '{selected_profile}' (required for production daemon auth)"
-            ),
-            "run `claw auth login --profile <profile>` before starting the production daemon",
-        ));
-    } else if cfg.auth.require_auth_for_daemon {
-        checks.push(CheckResult::pass(
-            "daemon auth token",
-            format!("token present for profile '{selected_profile}'"),
-        ));
-    } else {
+    if !cfg.auth.require_auth_for_daemon {
         checks.push(CheckResult::pass(
             "daemon auth token",
             "not required by current configuration".to_string(),
         ));
+    } else {
+        match auth_store::try_resolve_access_token(Some(&selected_profile)) {
+            Ok(Some(_)) => checks.push(CheckResult::pass(
+                "daemon auth token",
+                format!("token present for profile '{selected_profile}'"),
+            )),
+            Ok(None) => checks.push(CheckResult::warn(
+                "daemon auth token",
+                format!(
+                    "no auth token found for profile '{selected_profile}' (required for production daemon auth)"
+                ),
+                "run `claw auth login --profile <profile>` before starting the production daemon",
+            )),
+            Err(err) => checks.push(CheckResult::fail(
+                "daemon auth token",
+                format!("unable to read auth profile '{selected_profile}': {err}"),
+                "fix ~/.claw/auth.toml or recreate the profile with `claw auth token set --stdin`",
+            )),
+        }
     }
 
     if cfg.tls.require_for_non_localhost {
@@ -296,18 +319,46 @@ fn run_preflight(_runtime: &RuntimeOptions) -> anyhow::Result<()> {
 
     let has_failures = checks.iter().any(|check| check.status == CheckStatus::Fail);
 
-    if has_failures {
-        println!("Preflight: FAIL");
+    if json {
+        let pass_count = checks
+            .iter()
+            .filter(|check| check.status == CheckStatus::Pass)
+            .count();
+        let warn_count = checks
+            .iter()
+            .filter(|check| check.status == CheckStatus::Warn)
+            .count();
+        let fail_count = checks
+            .iter()
+            .filter(|check| check.status == CheckStatus::Fail)
+            .count();
+        print_json(serde_json::json!({
+            "schema_version": ADMIN_JSON_SCHEMA_VERSION,
+            "action": "preflight",
+            "ok": !has_failures,
+            "repo_root": root.display().to_string(),
+            "config_path": config::config_file_path(&root).display().to_string(),
+            "summary": {
+                "pass": pass_count,
+                "warn": warn_count,
+                "fail": fail_count,
+            },
+            "checks": checks.iter().map(CheckResult::to_json).collect::<Vec<_>>(),
+        }))?;
     } else {
-        println!("Preflight: PASS");
-    }
+        if has_failures {
+            println!("Preflight: FAIL");
+        } else {
+            println!("Preflight: PASS");
+        }
 
-    for check in &checks {
-        println!("  {}", check.render());
-    }
+        for check in &checks {
+            println!("  {}", check.render());
+        }
 
-    println!("  repository: {}", root.display());
-    println!("  config: {}", config::config_file_path(&root).display());
+        println!("  repository: {}", root.display());
+        println!("  config: {}", config::config_file_path(&root).display());
+    }
 
     if has_failures {
         anyhow::bail!("preflight failed");
@@ -321,6 +372,16 @@ enum CheckStatus {
     Pass,
     Warn,
     Fail,
+}
+
+impl CheckStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            CheckStatus::Pass => "pass",
+            CheckStatus::Warn => "warn",
+            CheckStatus::Fail => "fail",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -379,6 +440,15 @@ impl CheckResult {
             ),
             None => format!("[{status_label}] {}: {}", self.name, self.detail),
         }
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "name": self.name,
+            "status": self.status.as_str(),
+            "detail": self.detail,
+            "next_step": self.next_step,
+        })
     }
 }
 
@@ -443,55 +513,101 @@ fn nofile_soft_limit() -> anyhow::Result<u64> {
         .map_err(|err| anyhow::anyhow!("invalid nofile soft limit '{value}': {err}"))
 }
 
-fn run_backup_create() -> anyhow::Result<()> {
+fn run_backup_create(json: bool) -> anyhow::Result<()> {
     let root = config::find_repo_root()?;
     let backup = create_backup(&root)?;
+    let total_bytes = backup.files.iter().map(|entry| entry.bytes).sum::<u64>();
     append_ledger(
         &root,
         LedgerEntry {
             timestamp_ms: now_ms(),
             action: "backup.create".to_string(),
             status: "ok".to_string(),
-            details: serde_json::json!({"backup_id": backup.backup_id}),
+            details: serde_json::json!({
+                "backup_id": backup.backup_id,
+                "file_count": backup.files.len(),
+                "total_bytes": total_bytes,
+            }),
         },
     )?;
-    println!("Created backup: {}", backup.backup_id);
-    println!("  files: {}", backup.files.len());
+    if json {
+        print_json(serde_json::json!({
+            "schema_version": ADMIN_JSON_SCHEMA_VERSION,
+            "action": "backup.create",
+            "backup_id": backup.backup_id,
+            "created_at_ms": backup.created_at_ms,
+            "file_count": backup.files.len(),
+            "total_bytes": total_bytes,
+        }))?;
+    } else {
+        println!("Created backup: {}", backup.backup_id);
+        println!("  files: {}", backup.files.len());
+    }
     Ok(())
 }
 
-fn run_backup_verify(backup_id: Option<String>) -> anyhow::Result<()> {
+fn run_backup_verify(backup_id: Option<String>, json: bool) -> anyhow::Result<()> {
     let root = config::find_repo_root()?;
     let backup_id = resolve_backup_id(&root, backup_id.as_deref())?;
-    verify_backup(&root, &backup_id)?;
-    println!("Backup verified: {backup_id}");
-    Ok(())
-}
-
-fn run_migrate_plan() -> anyhow::Result<()> {
-    let root = config::find_repo_root()?;
-    let plan = config::plan_config_migration(&root)?;
-    println!("Migration plan -> {}", plan.target.display());
-    if let Some(source) = plan.source {
-        println!("  source: {}", source.display());
+    let verification = verify_backup(&root, &backup_id)?;
+    if json {
+        print_json(serde_json::json!({
+            "schema_version": ADMIN_JSON_SCHEMA_VERSION,
+            "action": "backup.verify",
+            "backup_id": backup_id,
+            "backup": verification,
+        }))?;
     } else {
-        println!("  source: defaults");
+        println!("Backup verified: {backup_id}");
     }
-    println!("{}", plan.diff);
     Ok(())
 }
 
-fn run_migrate_apply(dry_run: bool) -> anyhow::Result<()> {
+fn run_migrate_plan(json: bool) -> anyhow::Result<()> {
     let root = config::find_repo_root()?;
     let plan = config::plan_config_migration(&root)?;
-    println!("Migration target: {}", plan.target.display());
-    println!("{}", plan.diff);
+    if json {
+        print_json(migration_plan_json(
+            "migrate.plan",
+            false,
+            false,
+            None,
+            &plan,
+        ))?;
+    } else {
+        println!("Migration plan -> {}", plan.target.display());
+        if let Some(source) = &plan.source {
+            println!("  source: {}", source.display());
+        } else {
+            println!("  source: defaults");
+        }
+        println!("{}", plan.diff);
+    }
+    Ok(())
+}
+
+fn run_migrate_apply(dry_run: bool, json: bool) -> anyhow::Result<()> {
+    let root = config::find_repo_root()?;
+    let plan = config::plan_config_migration(&root)?;
     if dry_run {
-        println!("Dry run complete. No files changed.");
+        if json {
+            print_json(migration_plan_json(
+                "migrate.apply",
+                true,
+                false,
+                None,
+                &plan,
+            ))?;
+        } else {
+            println!("Migration target: {}", plan.target.display());
+            println!("{}", plan.diff);
+            println!("Dry run complete. No files changed.");
+        }
         return Ok(());
     }
 
     let backup = create_backup(&root)?;
+    let backup_id = backup.backup_id.clone();
     let applied = config::apply_config_migration(&root)?;
     append_ledger(
         &root,
@@ -500,30 +616,72 @@ fn run_migrate_apply(dry_run: bool) -> anyhow::Result<()> {
             action: "migrate.apply".to_string(),
             status: "ok".to_string(),
             details: serde_json::json!({
-                "backup_id": backup.backup_id,
+                "backup_id": backup_id.clone(),
                 "target": applied.target.display().to_string(),
             }),
         },
     )?;
-    println!("Migration applied.");
+    if json {
+        print_json(migration_plan_json(
+            "migrate.apply",
+            false,
+            true,
+            Some(backup_id.as_str()),
+            &applied,
+        ))?;
+    } else {
+        println!("Migration target: {}", plan.target.display());
+        println!("{}", plan.diff);
+        println!("Migration applied.");
+    }
     Ok(())
 }
 
-fn run_rollback_plan(backup_id: Option<String>) -> anyhow::Result<()> {
+fn migration_plan_json(
+    action: &'static str,
+    dry_run: bool,
+    applied: bool,
+    backup_id: Option<&str>,
+    plan: &config::ConfigMigrationPlan,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": ADMIN_JSON_SCHEMA_VERSION,
+        "action": action,
+        "dry_run": dry_run,
+        "applied": applied,
+        "backup_id": backup_id,
+        "target": plan.target.display().to_string(),
+        "source": plan.source.as_ref().map(|source| source.display().to_string()),
+        "source_kind": if plan.source.is_some() { "file" } else { "defaults" },
+        "diff": plan.diff.as_str(),
+    })
+}
+
+fn run_rollback_plan(backup_id: Option<String>, json: bool) -> anyhow::Result<()> {
     let root = config::find_repo_root()?;
     let backup_id = resolve_backup_id(&root, backup_id.as_deref())?;
-    verify_backup(&root, &backup_id)?;
+    let verification = verify_backup(&root, &backup_id)?;
     let snapshot = snapshot_dir(&root, &backup_id);
     let files = collect_relative_files(&snapshot)?;
-    println!("Rollback plan from backup: {backup_id}");
-    println!("  restore files: {}", files.len());
+    if json {
+        print_json(serde_json::json!({
+            "schema_version": ADMIN_JSON_SCHEMA_VERSION,
+            "action": "rollback.plan",
+            "backup_id": backup_id,
+            "verified": verification.verified,
+            "restore_file_count": files.len(),
+        }))?;
+    } else {
+        println!("Rollback plan from backup: {backup_id}");
+        println!("  restore files: {}", files.len());
+    }
     Ok(())
 }
 
-fn run_rollback_execute(backup_id: Option<String>) -> anyhow::Result<()> {
+fn run_rollback_execute(backup_id: Option<String>, json: bool) -> anyhow::Result<()> {
     let root = config::find_repo_root()?;
     let backup_id = resolve_backup_id(&root, backup_id.as_deref())?;
-    verify_backup(&root, &backup_id)?;
+    let verification = verify_backup(&root, &backup_id)?;
     restore_backup(&root, &backup_id)?;
     append_ledger(
         &root,
@@ -534,11 +692,21 @@ fn run_rollback_execute(backup_id: Option<String>) -> anyhow::Result<()> {
             details: serde_json::json!({"backup_id": backup_id}),
         },
     )?;
-    println!("Rollback executed: {backup_id}");
+    if json {
+        print_json(serde_json::json!({
+            "schema_version": ADMIN_JSON_SCHEMA_VERSION,
+            "action": "rollback.execute",
+            "backup_id": backup_id,
+            "verified": verification.verified,
+            "restored": true,
+        }))?;
+    } else {
+        println!("Rollback executed: {backup_id}");
+    }
     Ok(())
 }
 
-fn run_support_bundle(out: Option<PathBuf>) -> anyhow::Result<()> {
+fn run_support_bundle(out: Option<PathBuf>, json: bool) -> anyhow::Result<()> {
     let root = config::find_repo_root()?;
     let cfg = config::load_or_default_config(&root)?;
     let store = ClawStore::open(&root)?;
@@ -547,12 +715,16 @@ fn run_support_bundle(out: Option<PathBuf>) -> anyhow::Result<()> {
     let head = store.read_head().ok().map(|v| format!("{v:?}"));
     let latest_backup_id = resolve_backup_id(&root, None).ok();
     let request_id = format!("req_{}", now_ms());
+    let (config, redactions) = support_bundle_config(&cfg)?;
 
     let bundle = SupportBundle {
+        schema_version: ADMIN_JSON_SCHEMA_VERSION,
+        action: "support-bundle",
         request_id: request_id.clone(),
         created_at_ms: now_ms(),
         repo_root: root.display().to_string(),
-        config: cfg,
+        config,
+        redactions,
         head,
         refs_count,
         latest_backup_id,
@@ -563,11 +735,8 @@ fn run_support_bundle(out: Option<PathBuf>) -> anyhow::Result<()> {
             .join("support")
             .join(format!("support-bundle-{request_id}.json"))
     });
-    if let Some(parent) = output_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let content = serde_json::to_string_pretty(&bundle)?;
-    std::fs::write(&output_path, content)?;
+    write_bytes_atomic(&output_path, content.as_bytes())?;
 
     append_ledger(
         &root,
@@ -579,8 +748,39 @@ fn run_support_bundle(out: Option<PathBuf>) -> anyhow::Result<()> {
         },
     )?;
 
-    println!("Support bundle written: {}", output_path.display());
+    if json {
+        print_json(serde_json::json!({
+            "schema_version": ADMIN_JSON_SCHEMA_VERSION,
+            "action": "support-bundle",
+            "written": true,
+            "path": output_path.display().to_string(),
+            "request_id": bundle.request_id,
+            "created_at_ms": bundle.created_at_ms,
+            "refs_count": bundle.refs_count,
+            "latest_backup_id": bundle.latest_backup_id,
+            "redaction_count": bundle.redactions.len(),
+        }))?;
+    } else {
+        println!("Support bundle written: {}", output_path.display());
+    }
     Ok(())
+}
+
+fn support_bundle_config(cfg: &ClawConfigV1) -> anyhow::Result<(serde_json::Value, Vec<String>)> {
+    let mut value = serde_json::to_value(cfg)?;
+    let mut redactions = Vec::new();
+    if let Some(tls) = value.get_mut("tls").and_then(|tls| tls.as_object_mut()) {
+        for field in ["cert_path", "key_path"] {
+            if tls.get(field).is_some_and(|path| !path.is_null()) {
+                tls.insert(
+                    field.to_string(),
+                    serde_json::Value::String("<redacted:support-bundle>".to_string()),
+                );
+                redactions.push(format!("config.tls.{field}"));
+            }
+        }
+    }
+    Ok((value, redactions))
 }
 
 fn create_backup(root: &Path) -> anyhow::Result<BackupManifest> {
@@ -599,11 +799,11 @@ fn create_backup(root: &Path) -> anyhow::Result<BackupManifest> {
         files: entries,
     };
     let manifest_path = backup_root.join("manifest.json");
-    std::fs::write(manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+    write_bytes_atomic(&manifest_path, &serde_json::to_vec_pretty(&manifest)?)?;
     Ok(manifest)
 }
 
-fn verify_backup(root: &Path, backup_id: &str) -> anyhow::Result<()> {
+fn verify_backup(root: &Path, backup_id: &str) -> anyhow::Result<BackupVerification> {
     let manifest_path = backups_dir(root).join(backup_id).join("manifest.json");
     let manifest: BackupManifest = serde_json::from_slice(&std::fs::read(&manifest_path)?)
         .map_err(|err| {
@@ -611,6 +811,8 @@ fn verify_backup(root: &Path, backup_id: &str) -> anyhow::Result<()> {
         })?;
 
     let snapshot = snapshot_dir(root, backup_id);
+    let total_bytes = manifest.files.iter().map(|entry| entry.bytes).sum::<u64>();
+    let file_count = manifest.files.len();
     for entry in &manifest.files {
         let path = snapshot.join(&entry.path);
         let bytes = std::fs::read(&path)
@@ -623,7 +825,14 @@ fn verify_backup(root: &Path, backup_id: &str) -> anyhow::Result<()> {
             anyhow::bail!("backup checksum mismatch for {}", entry.path);
         }
     }
-    Ok(())
+    Ok(BackupVerification {
+        backup_id: backup_id.to_string(),
+        manifest_path: manifest_path.display().to_string(),
+        snapshot_path: snapshot.display().to_string(),
+        file_count,
+        total_bytes,
+        verified: true,
+    })
 }
 
 fn restore_backup(root: &Path, backup_id: &str) -> anyhow::Result<()> {
@@ -649,10 +858,7 @@ fn restore_backup(root: &Path, backup_id: &str) -> anyhow::Result<()> {
         }
         let source = snapshot.join(&rel);
         let dest = target.join(&rel);
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::copy(source, dest)?;
+        copy_file_durable(&source, &dest)?;
     }
 
     Ok(())
@@ -685,10 +891,7 @@ fn copy_tree_with_hashes(
             continue;
         }
 
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::copy(&path, &dest)?;
+        copy_file_durable(&path, &dest)?;
         let bytes = std::fs::read(&path)?;
         let rel_path = dest
             .strip_prefix(destination_root)
@@ -749,6 +952,44 @@ fn append_ledger(root: &Path, entry: LedgerEntry) -> anyhow::Result<()> {
         .append(true)
         .open(path)?;
     file.write_all(&line)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("path has no parent: {}", path.display()))?;
+    std::fs::create_dir_all(parent)?;
+
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    {
+        use std::io::Write;
+
+        let file = temp.as_file_mut();
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    temp.persist(path).map_err(|err| err.error)?;
+    sync_dir(parent)?;
+    Ok(())
+}
+
+fn copy_file_durable(source: &Path, dest: &Path) -> anyhow::Result<()> {
+    let parent = dest
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("path has no parent: {}", dest.display()))?;
+    std::fs::create_dir_all(parent)?;
+    std::fs::copy(source, dest)?;
+    std::fs::File::open(dest)?.sync_all()?;
+    sync_dir(parent)?;
+    Ok(())
+}
+
+fn sync_dir(path: &Path) -> anyhow::Result<()> {
+    if let Ok(dir) = std::fs::File::open(path) {
+        dir.sync_all()?;
+    }
     Ok(())
 }
 
@@ -785,6 +1026,11 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hex::encode(hasher.finalize())
+}
+
+fn print_json(value: serde_json::Value) -> anyhow::Result<()> {
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
 }
 
 fn now_ms() -> u64 {

@@ -121,6 +121,8 @@ pub fn run(args: ChangeArgs) -> anyhow::Result<()> {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
+                        "schema_version": 1,
+                        "action": "change.create",
                         "created": true,
                         "change": change_json(&change, Some(id.to_hex())),
                     }))?
@@ -145,6 +147,8 @@ pub fn run(args: ChangeArgs) -> anyhow::Result<()> {
                     println!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
+                            "schema_version": 1,
+                            "action": "change.show",
                             "change": change_json(&change, Some(obj_id.to_hex())),
                         }))?
                     );
@@ -176,6 +180,12 @@ pub fn run(args: ChangeArgs) -> anyhow::Result<()> {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
+                        "schema_version": 1,
+                        "action": "change.list",
+                        "change_count": changes.len(),
+                        "filters": {
+                            "intent": intent,
+                        },
                         "changes": changes,
                     }))?
                 );
@@ -225,6 +235,8 @@ pub fn run(args: ChangeArgs) -> anyhow::Result<()> {
                     println!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
+                            "schema_version": 1,
+                            "action": "change.status",
                             "updated": true,
                             "change": change_json(&change, Some(new_id.to_hex())),
                         }))?

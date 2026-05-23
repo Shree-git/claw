@@ -12,8 +12,13 @@ use claw_store::ClawStore;
 use super::git_notes::{import_note_into_store, read_note, write_note, GitProvenanceNote};
 use crate::config::find_repo_root;
 
+const GIT_ROUNDTRIP_JSON_SCHEMA_VERSION: u8 = 1;
+
 #[derive(Args)]
 pub struct GitRoundtripArgs {
+    /// Output command results as JSON
+    #[arg(long, global = true)]
+    json: bool,
     /// Source claw ref to verify
     #[arg(long, name = "ref", default_value = "heads/main")]
     ref_name: String,
@@ -66,22 +71,95 @@ pub fn run(args: GitRoundtripArgs) -> anyhow::Result<()> {
     let imported_revision_id = importer.import_ref(&git_dir, &git_ref, &args.import_ref)?;
 
     if args.with_notes {
+        let mut notes_imported = 0usize;
         for (commit_sha, revision_id) in importer.imported_commits() {
             let Some(note) = read_note(&git_dir, &args.notes_ref, &hex::encode(commit_sha))? else {
                 continue;
             };
             import_note_into_store(&store, &revision_id, note)?;
+            notes_imported += 1;
         }
+        let verification = verify_roundtrip(&store, &source_revision_id, &imported_revision_id)?;
+        print_roundtrip_result(
+            &args,
+            &git_dir,
+            &git_ref,
+            &exported_commit_sha,
+            &source_revision_id,
+            &imported_revision_id,
+            Some(notes_imported),
+            &verification,
+        )?;
+        return Ok(());
     }
 
-    verify_roundtrip(&store, &source_revision_id, &imported_revision_id)?;
+    let verification = verify_roundtrip(&store, &source_revision_id, &imported_revision_id)?;
+    print_roundtrip_result(
+        &args,
+        &git_dir,
+        &git_ref,
+        &exported_commit_sha,
+        &source_revision_id,
+        &imported_revision_id,
+        None,
+        &verification,
+    )?;
 
-    println!("Roundtrip verified.");
-    println!("  Source ref: {}", args.ref_name);
-    println!("  Source revision: {}", source_revision_id.to_hex());
-    println!("  Exported git ref: {}", git_ref);
-    println!("  Imported ref: {}", args.import_ref);
-    println!("  Imported revision: {}", imported_revision_id.to_hex());
+    Ok(())
+}
+
+struct RoundtripVerification {
+    source_depth: usize,
+    imported_depth: usize,
+}
+
+fn print_roundtrip_result(
+    args: &GitRoundtripArgs,
+    git_dir: &Path,
+    git_ref: &str,
+    exported_commit_sha: &[u8; 20],
+    source_revision_id: &ObjectId,
+    imported_revision_id: &ObjectId,
+    notes_imported: Option<usize>,
+    verification: &RoundtripVerification,
+) -> anyhow::Result<()> {
+    if args.json {
+        print_json(serde_json::json!({
+            "schema_version": GIT_ROUNDTRIP_JSON_SCHEMA_VERSION,
+            "action": "git-roundtrip",
+            "verified": true,
+            "source_ref": args.ref_name,
+            "source_revision": source_revision_id.to_hex(),
+            "git_dir": git_dir.display().to_string(),
+            "exported_git_ref": git_ref,
+            "exported_git_commit": hex::encode(exported_commit_sha),
+            "import_ref": args.import_ref,
+            "imported_revision": imported_revision_id.to_hex(),
+            "with_notes": args.with_notes,
+            "notes_ref": if args.with_notes { Some(args.notes_ref.as_str()) } else { None },
+            "notes_imported": notes_imported,
+            "checks": {
+                "tree": true,
+                "change_linkage": true,
+                "ancestry": true,
+                "source_revision_count": verification.source_depth,
+                "imported_revision_count": verification.imported_depth,
+            },
+        }))?;
+    } else {
+        println!("Roundtrip verified.");
+        println!("  Source ref: {}", args.ref_name);
+        println!("  Source revision: {}", source_revision_id.to_hex());
+        println!("  Exported git ref: {git_ref}");
+        println!("  Imported ref: {}", args.import_ref);
+        println!("  Imported revision: {}", imported_revision_id.to_hex());
+        if let Some(notes_imported) = notes_imported {
+            println!(
+                "  Imported {notes_imported} provenance note(s) from refs/notes/{}",
+                args.notes_ref
+            );
+        }
+    }
 
     Ok(())
 }
@@ -90,7 +168,7 @@ fn verify_roundtrip(
     store: &ClawStore,
     source_revision_id: &ObjectId,
     imported_revision_id: &ObjectId,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<RoundtripVerification> {
     let source_revision = load_revision(store, source_revision_id)?;
     let imported_revision = load_revision(store, imported_revision_id)?;
 
@@ -120,6 +198,14 @@ fn verify_roundtrip(
         );
     }
 
+    Ok(RoundtripVerification {
+        source_depth,
+        imported_depth,
+    })
+}
+
+fn print_json(value: serde_json::Value) -> anyhow::Result<()> {
+    println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
 }
 
@@ -185,10 +271,28 @@ fn collect_revision_ids(store: &ClawStore, start: &ObjectId) -> anyhow::Result<V
 
 fn write_git_branch_ref(git_dir: &Path, git_ref: &str, sha1: &[u8; 20]) -> anyhow::Result<()> {
     let ref_path = git_dir.join(git_ref);
-    if let Some(parent) = ref_path.parent() {
-        std::fs::create_dir_all(parent)?;
+    write_bytes_atomic(&ref_path, format!("{}\n", hex::encode(sha1)).as_bytes())?;
+    Ok(())
+}
+
+fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("path has no parent: {}", path.display()))?;
+    std::fs::create_dir_all(parent)?;
+
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    {
+        use std::io::Write;
+
+        let file = temp.as_file_mut();
+        file.write_all(bytes)?;
+        file.sync_all()?;
     }
-    std::fs::write(ref_path, format!("{}\n", hex::encode(sha1)))?;
+    temp.persist(path).map_err(|err| err.error)?;
+    if let Ok(parent_dir) = std::fs::File::open(parent) {
+        parent_dir.sync_all()?;
+    }
     Ok(())
 }
 

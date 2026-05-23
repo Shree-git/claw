@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Write text conflict markers (<<<< ==== >>>>)
 pub fn write_text_conflict(
@@ -51,8 +51,7 @@ pub fn write_text_conflict(
     }
     output.push_str(&format!(">>>>>>> {}\n", right_label));
 
-    std::fs::write(&file_path, output)?;
-    Ok(())
+    write_file_atomic(&file_path, output.as_bytes())
 }
 
 /// Write JSON conflict (structured)
@@ -76,8 +75,7 @@ pub fn write_json_conflict(
         }
     });
     let content = serde_json::to_string_pretty(&conflict)?;
-    std::fs::write(&file_path, content)?;
-    Ok(())
+    write_file_atomic(&file_path, content.as_bytes())
 }
 
 /// Write binary conflict: main file = left, sidecars for RIGHT and BASE
@@ -92,8 +90,59 @@ pub fn write_binary_conflict(
     if let Some(parent) = file_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&file_path, left)?;
-    std::fs::write(format!("{}.BASE", file_path.display()), base)?;
-    std::fs::write(format!("{}.RIGHT", file_path.display()), right)?;
+    write_file_atomic(&file_path, left)?;
+    write_file_atomic(&sidecar_path(&file_path, "BASE"), base)?;
+    write_file_atomic(&sidecar_path(&file_path, "RIGHT"), right)?;
     Ok(())
+}
+
+pub fn sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let mut sidecar = path.as_os_str().to_os_string();
+    sidecar.push(format!(".{suffix}"));
+    PathBuf::from(sidecar)
+}
+
+fn write_file_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("path has no parent: {}", path.display()))?;
+    std::fs::create_dir_all(parent)?;
+
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    {
+        use std::io::Write;
+
+        let file = temp.as_file_mut();
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    temp.persist(path).map_err(|err| err.error)?;
+    if let Ok(parent_dir) = std::fs::File::open(parent) {
+        parent_dir.sync_all()?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binary_conflict_writes_path_safe_sidecars() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        write_binary_conflict(tmp.path(), "nested/archive.bin", b"base", b"left", b"right")
+            .unwrap();
+
+        let main_path = tmp.path().join("nested").join("archive.bin");
+        assert_eq!(std::fs::read(&main_path).unwrap(), b"left");
+        assert_eq!(
+            std::fs::read(sidecar_path(&main_path, "BASE")).unwrap(),
+            b"base"
+        );
+        assert_eq!(
+            std::fs::read(sidecar_path(&main_path, "RIGHT")).unwrap(),
+            b"right"
+        );
+    }
 }

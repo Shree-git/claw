@@ -16,11 +16,30 @@ capsules, policies, snapshots, conflicts, workstreams, and reflogs.
 
 ## JSON Output
 
-JSON output includes the object display ID, hex ID, object type, and serialized
-object value.
+JSON output emits `schema_version: 1` and includes the original query, object
+display ID, hex ID, object type, and serialized object value. The nested
+`object` block is retained for compatibility with older automation.
 
 ```json
 {
+  "schema_version": 1,
+  "action": "show",
+  "query": "heads/main",
+  "object_id": "clw_...",
+  "object_hex": "7b...",
+  "type": "revision",
+  "value": {
+    "Revision": {
+      "author": "claw",
+      "change_id": null,
+      "created_at_ms": 1710000000000,
+      "parents": [],
+      "patches": [],
+      "policy_evidence": [],
+      "summary": "initial snapshot",
+      "tree": [123, 45]
+    }
+  },
   "object": {
     "id": "clw_...",
     "hex": "7b...",

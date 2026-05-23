@@ -7,6 +7,7 @@ Export Claw history into Git objects and refs.
 ```bash
 claw git-export --git-dir /tmp/exported.git --all-heads
 claw git-export --git-dir /tmp/exported.git --all-heads --dry-run
+claw git-export --json --git-dir /tmp/exported.git --all-heads --dry-run
 git -C /tmp/exported.git fsck --strict
 git -C /tmp/exported.git log --oneline
 ```
@@ -17,14 +18,16 @@ Always verify exported repositories with real Git commands before handing them t
 
 ## JSON Output
 
-`claw git-export` does not currently emit command-specific success JSON. Use
-global JSON errors for automation failures:
+`--json` emits `schema_version: 1`, `action: "git-export"`, `dry_run`, `git_dir`,
+`export_count`, and an `exports` array. Each export row includes `source_ref`,
+`revision_id`, `git_branch`, `revision_count`, `git_commit`, and `note_count`.
+Dry-run rows set `git_commit` to `null` because no Git objects are written.
+
+Use global JSON errors for automation failures:
 
 ```bash
-claw --error-format json git-export --git-dir /tmp/exported.git --all-heads --dry-run
+claw --error-format json git-export --json --git-dir /tmp/exported.git --all-heads --dry-run
 ```
-
-Dry-run output is human-readable and names each planned branch export.
 
 ## Exit Codes
 

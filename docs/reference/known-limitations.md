@@ -26,13 +26,27 @@ Claw VCS is v0.1 experimental software. It is appropriate for local exploration,
 
 - Git import/export is intended for interop, testing, and migration paths.
 - Bridge behavior must be verified with real Git commands such as `git fsck`, `git log`, `git cat-file`, and checkout tests before relying on exported repositories.
+- `claw bridge import` can fetch GitHub/GitLab PR or MR metadata live, but it
+  is an import/audit bridge, not a continuous hosted-provider synchronizer.
 - Unsupported or lossy Git features should be documented in migration notes for each release.
 
 ## Patching and Merge
 
-- Text, JSON, and binary codecs are implemented, but patch commutation remains conservative.
+- Text, JSON, TOML, YAML, OpenAPI/Kubernetes document, notebook, Rust,
+  TypeScript/JavaScript, Python, SQL migration, Protobuf, Terraform, and binary
+  codecs are implemented, but patch commutation remains conservative.
 - Binary files use replacement semantics.
-- Complex semantic merges for formats such as YAML, TOML, SQL migrations, and protobuf schemas are future codec work.
+- Source and infrastructure codecs are pragmatic top-level semantic codecs. They
+  emit canonical output and are not full formatting-preserving compiler AST
+  round-trippers.
+
+## Provenance Replay and Attestations
+
+- `claw provenance replay` uses a temporary filesystem sandbox by default and
+  compares exit status before recording replay evidence. The sandbox isolates
+  repository metadata and local file mutations, but it is not a hermetic
+  container or VM boundary and does not block network or host process access.
+- `claw provenance attach-attestation` stores SLSA/in-toto statements as capsule evidence, validates optional subject constraints, and validates required SLSA builder/build-type predicate metadata. Broader predicate-specific policy semantics remain future work.
 
 ## Workflow Model
 
@@ -56,8 +70,12 @@ Claw VCS is v0.1 experimental software. It is appropriate for local exploration,
   trust externally managed Ed25519 public keys.
 - `claw agent rotate` replaces the trusted public key and local signing key for
   an existing agent.
+- `claw agent quarantine` temporarily blocks future signing and integration
+  trust for an agent without permanently revoking it.
 - `claw agent revoke` blocks future `claw ship --agent <name>` use and removes
   the registration from integration provenance trust checks.
+- `claw agent audit` reports fleet state and local-key drift; it does not prove
+  that an externally managed key is still protected by its remote KMS or HSM.
 - Revocation does not rewrite old capsules or invalidate historical signatures;
   it changes future trust decisions.
 
@@ -70,9 +88,19 @@ Claw VCS is v0.1 experimental software. It is appropriate for local exploration,
 
 - Self-hosted daemon deployments are the primary supported remote model.
 - Hosted ClawLab-style remotes are planned and should not be assumed live unless release notes say so.
-- The sync protocol implements partial-clone filters for daemon object fetches,
-  but `claw sync clone` currently performs a full ref/object clone and does not
-  expose filter flags.
+- Daemon-backed `claw sync pull` and `claw sync clone` expose partial-clone
+  filter flags for intent IDs, path prefixes, codecs, visibility, time windows,
+  depth, and byte budgets.
+- Filtered fetches may intentionally omit advertised ref targets. In that case
+  `sync clone` skips the omitted ref and leaves the working tree unmaterialized
+  until a later wider fetch; `sync pull` skips the local ref update when the
+  target revision was not fetched.
+- Hosted `clawlab` HTTP remotes use the same filter request shape when the
+  remote advertises `partial-clone`; hosted remotes without that capability
+  fail filtered fetches before download.
+- Hosted policy-gated pushes require the remote to advertise
+  `policy-aware-push`; otherwise the client refuses the ref update rather than
+  silently downgrading to a local-only policy gate.
 - Sync clients should handle interrupted streams, missing objects, stale refs, auth failures, and protocol mismatches as normal error cases.
 
 ## Evidence Freshness

@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use base64::prelude::*;
 use rand::RngCore;
@@ -69,7 +69,7 @@ fn load_or_create_auth_key() -> anyhow::Result<[u8; 32]> {
 
     let mut key = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut key);
-    std::fs::write(&path, key)?;
+    atomic_write_private(&path, &key)?;
     set_private_permissions(&path)?;
     Ok(key)
 }
@@ -123,24 +123,24 @@ fn decrypt_profile_tokens(profile_name: &str, profile: &mut AuthProfile) {
     });
 }
 
-pub fn load_auth_config() -> AuthConfig {
+pub fn try_load_auth_config() -> anyhow::Result<AuthConfig> {
     let path = match auth_config_path() {
         Ok(p) => p,
-        Err(_) => return AuthConfig::default(),
+        Err(err) => return Err(err),
     };
 
-    if path.exists() {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            if let Ok(mut config) = toml::from_str::<AuthConfig>(&content) {
-                for (profile_name, profile) in &mut config.profiles {
-                    decrypt_profile_tokens(profile_name, profile);
-                }
-                return config;
-            }
-        }
+    if !path.exists() {
+        return Ok(AuthConfig::default());
     }
 
-    AuthConfig::default()
+    let content = std::fs::read_to_string(&path)
+        .map_err(|err| anyhow::anyhow!("failed to read auth config {}: {err}", path.display()))?;
+    let mut config = toml::from_str::<AuthConfig>(&content)
+        .map_err(|err| anyhow::anyhow!("invalid auth config {}: {err}", path.display()))?;
+    for (profile_name, profile) in &mut config.profiles {
+        decrypt_profile_tokens(profile_name, profile);
+    }
+    Ok(config)
 }
 
 pub fn save_auth_config(config: &AuthConfig) -> anyhow::Result<()> {
@@ -160,13 +160,41 @@ pub fn save_auth_config(config: &AuthConfig) -> anyhow::Result<()> {
     }
 
     let content = toml::to_string_pretty(&persisted)?;
-    std::fs::write(path, content)?;
+    atomic_write_private(&path, content.as_bytes())?;
     set_private_permissions(&auth_config_path()?)?;
     Ok(())
 }
 
-pub fn resolve_access_token(profile: Option<&str>) -> Option<String> {
+fn atomic_write_private(path: &Path, content: &[u8]) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("auth path has no parent: {}", path.display()))?;
+    std::fs::create_dir_all(parent)?;
+
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    {
+        use std::io::Write;
+
+        let file = temp.as_file_mut();
+        file.write_all(content)?;
+        file.sync_all()?;
+    }
+    temp.persist(path).map_err(|err| {
+        anyhow::anyhow!(
+            "failed to replace auth file {}: {}",
+            path.display(),
+            err.error
+        )
+    })?;
+    set_private_permissions(path)?;
+    if let Ok(parent_dir) = std::fs::File::open(parent) {
+        parent_dir.sync_all()?;
+    }
+    Ok(())
+}
+
+pub fn try_resolve_access_token(profile: Option<&str>) -> anyhow::Result<Option<String>> {
     let profile = profile.unwrap_or("default");
-    let config = load_auth_config();
-    config.profiles.get(profile).map(|p| p.access_token.clone())
+    let config = try_load_auth_config()?;
+    Ok(config.profiles.get(profile).map(|p| p.access_token.clone()))
 }

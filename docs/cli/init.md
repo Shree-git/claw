@@ -16,13 +16,19 @@ After a successful non-JSON init, the CLI prints next-step onboarding hints for
 
 ## JSON Output
 
-`--json` prints whether repository state was created or only previewed.
+`--json` emits `schema_version: 1` and prints whether repository state was
+created or only previewed.
 
 ```json
 {
+  "schema_version": 1,
+  "action": "init",
+  "initialized": true,
   "created": true,
   "dry_run": false,
+  "already_initialized": false,
   "head": "heads/main",
+  "claw_dir": "/path/to/repo/.claw",
   "next_steps": [
     "claw status",
     "claw snapshot -m \"initial snapshot\"",
@@ -32,8 +38,8 @@ After a successful non-JSON init, the CLI prints next-step onboarding hints for
 }
 ```
 
-`claw init --json --dry-run` uses the same shape with `created: false` and
-`dry_run: true`.
+`claw init --json --dry-run` uses the same shape with `initialized: false`,
+`created: false`, and `dry_run: true`.
 
 ## Exit Codes
 

@@ -33,9 +33,10 @@ pub fn run(args: StatusArgs) -> anyhow::Result<()> {
     let claw_dir = store.layout().claw_dir();
     let in_merge = merge_state::exists(&claw_dir);
 
-    // Resolve HEAD to get current tree
-    let head_tree = if let Some(head_id) = store.resolve_head()? {
-        let head_obj = store.load_object(&head_id)?;
+    // Resolve HEAD to get current tree.
+    let head_id = store.resolve_head()?;
+    let head_tree = if let Some(head_id) = &head_id {
+        let head_obj = store.load_object(head_id)?;
         match head_obj {
             Object::Revision(ref rev) => rev.tree,
             _ => None,
@@ -66,7 +67,10 @@ pub fn run(args: StatusArgs) -> anyhow::Result<()> {
             })
             .collect();
         let output = serde_json::json!({
+            "schema_version": 1,
+            "action": "status",
             "branch": branch_name,
+            "head": head_id.as_ref().map(ToString::to_string),
             "in_merge": in_merge,
             "changes": entries,
         });
@@ -84,6 +88,9 @@ pub fn run(args: StatusArgs) -> anyhow::Result<()> {
                 println!("{} unresolved conflict(s):", unresolved.len());
                 for c in &unresolved {
                     println!("  CONFLICT: {} ({})", c.file_path, c.codec_id);
+                    if let Some(reason) = &c.reason {
+                        println!("    reason: {reason}");
+                    }
                 }
             }
             println!("  (use \"claw resolve\" to manage conflicts)");

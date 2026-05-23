@@ -1,5 +1,6 @@
 use claw_core::id::ObjectId;
 
+use crate::fs_util;
 use crate::layout::RepoLayout;
 use crate::StoreError;
 
@@ -33,6 +34,13 @@ fn validate_ref_path(name: &str, allow_empty: bool) -> Result<(), StoreError> {
                 if seg_str.is_empty() || seg_str == "." || seg_str == ".." {
                     return Err(StoreError::InvalidRefName(name.to_string()));
                 }
+                if seg_str.len() > 255
+                    || seg_str.ends_with([' ', '.'])
+                    || has_windows_reserved_char(seg_str)
+                    || is_windows_reserved_device_name(seg_str)
+                {
+                    return Err(StoreError::InvalidRefName(name.to_string()));
+                }
                 if seg_str
                     .chars()
                     .any(|c| c.is_control() || c == '/' || c == '\\')
@@ -60,36 +68,48 @@ fn validate_ref_path(name: &str, allow_empty: bool) -> Result<(), StoreError> {
     Ok(())
 }
 
+fn has_windows_reserved_char(name: &str) -> bool {
+    name.chars()
+        .any(|ch| matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+}
+
+fn is_windows_reserved_device_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name);
+    let upper = stem.to_ascii_uppercase();
+    matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || is_numbered_windows_device(&upper, "COM")
+        || is_numbered_windows_device(&upper, "LPT")
+}
+
+fn is_numbered_windows_device(name: &str, prefix: &str) -> bool {
+    let Some(suffix) = name.strip_prefix(prefix) else {
+        return false;
+    };
+    matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+}
+
 pub fn validate_ref_name(name: &str) -> Result<(), StoreError> {
     validate_ref_path(name, false)
 }
 
-pub fn write_ref(layout: &RepoLayout, name: &str, target: &ObjectId) -> Result<(), StoreError> {
+pub(crate) fn validate_existing_ref_path_portable(
+    layout: &RepoLayout,
+    name: &str,
+) -> Result<(), StoreError> {
     validate_ref_name(name)?;
+    ensure_ref_path_has_no_case_collision(layout, name)
+}
+
+pub fn write_ref(layout: &RepoLayout, name: &str, target: &ObjectId) -> Result<(), StoreError> {
+    validate_existing_ref_path_portable(layout, name)?;
     let path = layout.refs_dir().join(name);
-    let parent = path
-        .parent()
-        .ok_or_else(|| StoreError::InvalidRefName(name.to_string()))?;
-    std::fs::create_dir_all(parent)?;
 
-    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-    {
-        use std::io::Write;
-
-        let file = temp.as_file_mut();
-        file.write_all(target.to_hex().as_bytes())?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-    }
-    temp.persist(&path).map_err(|e| StoreError::Io(e.error))?;
-    if let Ok(dir_handle) = std::fs::File::open(parent) {
-        dir_handle.sync_all()?;
-    }
-    Ok(())
+    let content = format!("{}\n", target.to_hex());
+    fs_util::write_atomic(&path, content.as_bytes())
 }
 
 pub fn read_ref(layout: &RepoLayout, name: &str) -> Result<Option<ObjectId>, StoreError> {
-    validate_ref_name(name)?;
+    validate_existing_ref_path_portable(layout, name)?;
     let path = layout.refs_dir().join(name);
     if !path.exists() {
         return Ok(None);
@@ -100,7 +120,7 @@ pub fn read_ref(layout: &RepoLayout, name: &str) -> Result<Option<ObjectId>, Sto
 }
 
 pub fn delete_ref(layout: &RepoLayout, name: &str) -> Result<(), StoreError> {
-    validate_ref_name(name)?;
+    validate_existing_ref_path_portable(layout, name)?;
     let path = layout.refs_dir().join(name);
     if path.exists() {
         std::fs::remove_file(&path)?;
@@ -119,7 +139,7 @@ pub fn update_ref_cas(
     use crate::lockfile::LockFile;
     use crate::reflog;
 
-    validate_ref_name(name)?;
+    validate_existing_ref_path_portable(layout, name)?;
     let ref_path = layout.refs_dir().join(name);
     let _lock = LockFile::acquire(&ref_path)?;
 
@@ -146,8 +166,50 @@ pub fn update_ref_cas(
     Ok(())
 }
 
+fn ensure_ref_path_has_no_case_collision(
+    layout: &RepoLayout,
+    name: &str,
+) -> Result<(), StoreError> {
+    let mut dir = layout.refs_dir().to_path_buf();
+    for segment in name.split('/') {
+        if !dir.exists() {
+            return Ok(());
+        }
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let file_name = entry.file_name();
+            let Some(existing) = file_name.to_str() else {
+                continue;
+            };
+            if existing != segment && existing.eq_ignore_ascii_case(segment) {
+                let requested_path = dir.join(segment);
+                let requested = requested_path
+                    .strip_prefix(layout.refs_dir())
+                    .unwrap_or(requested_path.as_path())
+                    .to_string_lossy()
+                    .to_string();
+                let existing_path = entry.path();
+                let existing = existing_path
+                    .strip_prefix(layout.refs_dir())
+                    .unwrap_or(existing_path.as_path())
+                    .to_string_lossy()
+                    .to_string();
+                return Err(StoreError::RefNameCollision {
+                    requested,
+                    existing,
+                });
+            }
+        }
+        dir.push(segment);
+    }
+    Ok(())
+}
+
 pub fn list_refs(layout: &RepoLayout, prefix: &str) -> Result<Vec<(String, ObjectId)>, StoreError> {
     validate_ref_path(prefix, true)?;
+    if !prefix.is_empty() {
+        ensure_ref_path_has_no_case_collision(layout, prefix)?;
+    }
     let base = layout.refs_dir().join(prefix);
     if !base.exists() {
         return Ok(Vec::new());
@@ -243,6 +305,75 @@ mod tests {
         validate_ref_name("changes/01J00000000000000000000000").unwrap();
         validate_ref_name("capsules/by-revision/abcdef0123456789").unwrap();
         validate_ref_path("", true).unwrap();
+    }
+
+    #[test]
+    fn rejects_non_portable_ref_components() {
+        for name in [
+            "heads/name:stream",
+            "heads/name*glob",
+            "heads/name?query",
+            "heads/name<in",
+            "heads/name>out",
+            "heads/pipe|name",
+            "heads/quoted\"name",
+            "heads/trailing-dot.",
+            "heads/trailing-space ",
+            "heads/CON",
+            "heads/con.txt",
+            "heads/PRN",
+            "heads/AUX",
+            "heads/NUL",
+            "heads/COM1",
+            "heads/com9.log",
+            "heads/LPT1",
+            "heads/lpt9.txt",
+        ] {
+            let err = validate_ref_name(name).expect_err("ref name should be rejected");
+            assert!(matches!(err, StoreError::InvalidRefName(_)), "{name}");
+        }
+
+        let overlong_component = format!("heads/{}", "a".repeat(256));
+        let err = validate_ref_name(&overlong_component)
+            .expect_err("overlong ref component should be rejected");
+        assert!(matches!(err, StoreError::InvalidRefName(_)));
+    }
+
+    #[test]
+    fn write_ref_rejects_case_insensitive_sibling_collisions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let layout = RepoLayout::new(tmp.path());
+        layout.create_dirs().unwrap();
+
+        let main = content_hash(TypeTag::Blob, b"main");
+        let other = content_hash(TypeTag::Blob, b"other");
+        write_ref(&layout, "heads/main", &main).unwrap();
+
+        let err = write_ref(&layout, "heads/MAIN", &other)
+            .expect_err("case-insensitive sibling ref should be rejected");
+
+        assert!(matches!(err, StoreError::RefNameCollision { .. }));
+        assert_eq!(read_ref(&layout, "heads/main").unwrap(), Some(main));
+        assert!(!std::fs::read_dir(layout.refs_dir().join("heads"))
+            .unwrap()
+            .any(|entry| entry.unwrap().file_name() == "MAIN"));
+    }
+
+    #[test]
+    fn update_ref_cas_rejects_case_insensitive_parent_collisions_before_locking() {
+        let tmp = tempfile::tempdir().unwrap();
+        let layout = RepoLayout::new(tmp.path());
+        layout.create_dirs().unwrap();
+
+        let main = content_hash(TypeTag::Blob, b"main");
+        let other = content_hash(TypeTag::Blob, b"other");
+        write_ref(&layout, "heads/main", &main).unwrap();
+
+        let err = update_ref_cas(&layout, "HEADS/dev", None, &other, "test", "case collision")
+            .expect_err("case-insensitive parent ref should be rejected");
+
+        assert!(matches!(err, StoreError::RefNameCollision { .. }));
+        assert!(!layout.refs_dir().join("HEADS/dev.lock").exists());
     }
 
     #[test]

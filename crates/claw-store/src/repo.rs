@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::fs_util;
 use crate::layout::RepoLayout;
 use crate::StoreError;
 
@@ -22,8 +23,7 @@ pub fn write_default_config(layout: &RepoLayout) -> Result<(), StoreError> {
     let config = RepoConfig::default();
     let toml_str =
         toml::to_string_pretty(&config).map_err(|e| StoreError::Config(e.to_string()))?;
-    std::fs::write(layout.config_file(), toml_str)?;
-    Ok(())
+    fs_util::write_atomic(&layout.config_file(), toml_str.as_bytes())
 }
 
 pub fn read_config(layout: &RepoLayout) -> Result<RepoConfig, StoreError> {

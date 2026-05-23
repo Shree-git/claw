@@ -7,8 +7,13 @@ use claw_store::ClawStore;
 use super::git_notes::{import_note_into_store, read_note};
 use crate::config::find_repo_root;
 
+const GIT_IMPORT_JSON_SCHEMA_VERSION: u8 = 1;
+
 #[derive(Args)]
 pub struct GitImportArgs {
+    /// Output command results as JSON
+    #[arg(long, global = true)]
+    json: bool,
     /// Git ref to import (e.g. refs/heads/main)
     #[arg(long, default_value = "refs/heads/main")]
     git_ref: String,
@@ -63,6 +68,7 @@ pub fn run(args: GitImportArgs) -> anyhow::Result<()> {
     let root = find_repo_root()?;
     let store = ClawStore::open(&root)?;
     let git_dir = root.join(&args.git_dir);
+    let mut imports = Vec::new();
 
     if args.all_branches {
         let prefix = normalize_head_prefix(&args.head_prefix);
@@ -79,12 +85,20 @@ pub fn run(args: GitImportArgs) -> anyhow::Result<()> {
             Some(GitImporter::new(&store))
         };
         let mut imported = 0usize;
-        for (git_ref, _sha) in refs {
+        for (git_ref, sha) in refs {
             let short = git_ref.strip_prefix("refs/heads/").unwrap_or(&git_ref);
             let claw_ref = format!("{prefix}{short}");
             validate_ref_path(&claw_ref)?;
             if args.dry_run {
-                println!("Dry run: would import {git_ref} -> {claw_ref}");
+                imports.push(serde_json::json!({
+                    "git_ref": git_ref,
+                    "git_commit": hex::encode(sha),
+                    "claw_ref": claw_ref,
+                    "revision_id": null,
+                }));
+                if !args.json {
+                    println!("Dry run: would import {git_ref} -> {claw_ref}");
+                }
                 imported += 1;
                 continue;
             }
@@ -92,23 +106,45 @@ pub fn run(args: GitImportArgs) -> anyhow::Result<()> {
                 .as_mut()
                 .ok_or_else(|| anyhow::anyhow!("internal git importer state missing"))?;
             let revision_id = importer.import_ref(&git_dir, &git_ref, &claw_ref)?;
-            println!(
-                "Imported {git_ref} -> {claw_ref} ({})",
-                revision_id.to_hex()
-            );
+            imports.push(serde_json::json!({
+                "git_ref": git_ref,
+                "git_commit": hex::encode(sha),
+                "claw_ref": claw_ref,
+                "revision_id": revision_id.to_hex(),
+            }));
+            if !args.json {
+                println!(
+                    "Imported {git_ref} -> {claw_ref} ({})",
+                    revision_id.to_hex()
+                );
+            }
             imported += 1;
         }
         if args.dry_run {
-            if args.read_notes {
-                println!(
-                    "Dry run: would scan refs/notes/{} for provenance notes.",
-                    args.notes_ref
-                );
+            if args.json {
+                print_json(serde_json::json!({
+                    "schema_version": GIT_IMPORT_JSON_SCHEMA_VERSION,
+                    "action": "git-import",
+                    "dry_run": true,
+                    "git_dir": git_dir.display().to_string(),
+                    "all_branches": true,
+                    "import_count": imported,
+                    "read_notes": args.read_notes,
+                    "notes_ref": if args.read_notes { Some(args.notes_ref.as_str()) } else { None },
+                    "notes_imported": null,
+                    "imports": imports,
+                }))?;
+            } else {
+                if args.read_notes {
+                    println!(
+                        "Dry run: would scan refs/notes/{} for provenance notes.",
+                        args.notes_ref
+                    );
+                }
+                println!("Dry run: would import {imported} branch(es) from git.");
             }
-            println!("Dry run: would import {imported} branch(es) from git.");
         } else {
-            println!("Imported {imported} branch(es) from git.");
-            if args.read_notes {
+            let imported_notes = if args.read_notes {
                 let imported_notes = import_notes_for_imported_commits(
                     &store,
                     importer
@@ -117,46 +153,117 @@ pub fn run(args: GitImportArgs) -> anyhow::Result<()> {
                     &git_dir,
                     &args.notes_ref,
                 )?;
-                println!(
-                    "Imported {imported_notes} provenance note(s) from refs/notes/{}",
-                    args.notes_ref
-                );
+                if !args.json {
+                    println!(
+                        "Imported {imported_notes} provenance note(s) from refs/notes/{}",
+                        args.notes_ref
+                    );
+                }
+                Some(imported_notes)
+            } else {
+                None
+            };
+            if args.json {
+                print_json(serde_json::json!({
+                    "schema_version": GIT_IMPORT_JSON_SCHEMA_VERSION,
+                    "action": "git-import",
+                    "dry_run": false,
+                    "git_dir": git_dir.display().to_string(),
+                    "all_branches": true,
+                    "import_count": imported,
+                    "read_notes": args.read_notes,
+                    "notes_ref": if args.read_notes { Some(args.notes_ref.as_str()) } else { None },
+                    "notes_imported": imported_notes,
+                    "imports": imports,
+                }))?;
+            } else {
+                println!("Imported {imported} branch(es) from git.");
             }
         }
     } else {
         validate_ref_path(&args.ref_name)?;
         if args.dry_run {
             let (git_ref, sha1) = resolve_git_ref_for_preview(&git_dir, &args.git_ref)?;
-            println!(
-                "Dry run: would import {} ({}) -> {}",
-                git_ref,
-                hex::encode(sha1),
-                args.ref_name
-            );
-            if args.read_notes {
+            if args.json {
+                print_json(serde_json::json!({
+                    "schema_version": GIT_IMPORT_JSON_SCHEMA_VERSION,
+                    "action": "git-import",
+                    "dry_run": true,
+                    "git_dir": git_dir.display().to_string(),
+                    "all_branches": false,
+                    "import_count": 1,
+                    "read_notes": args.read_notes,
+                    "notes_ref": if args.read_notes { Some(args.notes_ref.as_str()) } else { None },
+                    "notes_imported": null,
+                    "imports": [{
+                        "git_ref": git_ref,
+                        "git_commit": hex::encode(sha1),
+                        "claw_ref": args.ref_name,
+                        "revision_id": null,
+                    }],
+                }))?;
+            } else {
                 println!(
-                    "Dry run: would scan refs/notes/{} for provenance notes.",
-                    args.notes_ref
+                    "Dry run: would import {} ({}) -> {}",
+                    git_ref,
+                    hex::encode(sha1),
+                    args.ref_name
                 );
+                if args.read_notes {
+                    println!(
+                        "Dry run: would scan refs/notes/{} for provenance notes.",
+                        args.notes_ref
+                    );
+                }
+                println!("  Claw object writes skipped.");
+                println!("  Claw ref updates skipped.");
             }
-            println!("  Claw object writes skipped.");
-            println!("  Claw ref updates skipped.");
             return Ok(());
         }
         let mut importer = GitImporter::new(&store);
         let revision_id = importer.import_ref(&git_dir, &args.git_ref, &args.ref_name)?;
-        println!("Imported git ref {} -> {}", args.git_ref, args.ref_name);
-        println!("  Revision: {}", revision_id.to_hex());
-        if args.read_notes {
+        let imported_notes = if args.read_notes {
             let imported_notes =
                 import_notes_for_imported_commits(&store, &importer, &git_dir, &args.notes_ref)?;
-            println!(
-                "Imported {imported_notes} provenance note(s) from refs/notes/{}",
-                args.notes_ref
-            );
+            Some(imported_notes)
+        } else {
+            None
+        };
+        if args.json {
+            print_json(serde_json::json!({
+                "schema_version": GIT_IMPORT_JSON_SCHEMA_VERSION,
+                "action": "git-import",
+                "dry_run": false,
+                "git_dir": git_dir.display().to_string(),
+                "all_branches": false,
+                "import_count": 1,
+                "read_notes": args.read_notes,
+                "notes_ref": if args.read_notes { Some(args.notes_ref.as_str()) } else { None },
+                "notes_imported": imported_notes,
+                "imports": [{
+                    "git_ref": args.git_ref,
+                    "git_commit": null,
+                    "claw_ref": args.ref_name,
+                    "revision_id": revision_id.to_hex(),
+                }],
+            }))?;
+        } else {
+            println!("Imported git ref {} -> {}", args.git_ref, args.ref_name);
+            println!("  Revision: {}", revision_id.to_hex());
+            if let Some(imported_notes) = imported_notes {
+                println!(
+                    "Imported {imported_notes} provenance note(s) from refs/notes/{}",
+                    args.notes_ref
+                );
+            }
         }
     }
 
+    Ok(())
+}
+
+fn print_json(value: serde_json::Value) -> anyhow::Result<()> {
+    println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
 }
 
@@ -220,6 +327,14 @@ mod tests {
     fn parses_dry_run_flag() {
         let cli = TestCli::parse_from(["claw", "--dry-run"]);
 
+        assert!(cli.args.dry_run);
+    }
+
+    #[test]
+    fn parses_json_after_subcommand() {
+        let cli = TestCli::parse_from(["claw", "--json", "--dry-run"]);
+
+        assert!(cli.args.json);
         assert!(cli.args.dry_run);
     }
 

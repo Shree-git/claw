@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use claw_core::id::ChangeId;
 use claw_core::id::ObjectId;
 use claw_core::object::Object;
-use claw_core::types::{Capsule, Policy, Revision};
+use claw_core::types::{Capsule, Conflict, PatchOp, Policy, Revision};
 use claw_crypto::capsule::verify_capsule;
 use claw_merge::emit::merge;
 use claw_patch::CodecRegistry;
@@ -15,11 +15,14 @@ use claw_store::{ClawStore, HeadState};
 use super::agent::AgentRegistration;
 use crate::config::find_repo_root;
 use crate::conflict_writer;
-use crate::merge_state::{self, ConflictEntry, MergeInfo, MergeState};
+use crate::merge_state::{self, ConflictEntry, ConflictRegion, MergeInfo, MergeState};
 use crate::worktree;
 
 #[derive(Args)]
 pub struct IntegrateArgs {
+    /// Output a machine-readable JSON receipt
+    #[arg(long)]
+    json: bool,
     /// Left ref (default: HEAD's branch)
     #[arg(long)]
     left: Option<String>,
@@ -87,18 +90,37 @@ pub fn run(args: IntegrateArgs) -> anyhow::Result<()> {
 
     if result.conflicts.is_empty() {
         if args.dry_run {
-            println!("Dry run: integration can be applied cleanly.");
-            println!("  Left ref: {left_ref} ({left_id})");
-            println!("  Right: {} ({right_id})", args.right);
-            if let Some(tree_id) = result.revision.tree {
-                println!("  Result tree: {tree_id}");
+            if args.json {
+                print_integrate_json(IntegrateJson {
+                    dry_run: true,
+                    clean: true,
+                    left_ref: &left_ref,
+                    right_ref: &args.right,
+                    left_id,
+                    right_id,
+                    base_id: result.ancestor,
+                    result_revision: None,
+                    result_tree: result.revision.tree,
+                    ref_updated: false,
+                    worktree_updated: false,
+                    merge_state_written: false,
+                    conflicts: vec![],
+                })?;
+            } else {
+                println!("Dry run: integration can be applied cleanly.");
+                println!("  Left ref: {left_ref} ({left_id})");
+                println!("  Right: {} ({right_id})", args.right);
+                if let Some(tree_id) = result.revision.tree {
+                    println!("  Result tree: {tree_id}");
+                }
+                println!("  Ref update skipped.");
+                println!("  Worktree update skipped.");
             }
-            println!("  Ref update skipped.");
-            println!("  Worktree update skipped.");
             return Ok(());
         }
 
         // Clean merge: store revision, materialize tree, advance ref
+        let result_tree = result.revision.tree;
         let rev_id = store.store_object(&Object::Revision(result.revision))?;
         store.update_ref_cas(
             &left_ref,
@@ -113,18 +135,55 @@ pub fn run(args: IntegrateArgs) -> anyhow::Result<()> {
             worktree::materialize_tree(&store, &tree_id, &root)?;
         }
 
-        println!("Integrated successfully: {rev_id}");
+        if args.json {
+            print_integrate_json(IntegrateJson {
+                dry_run: false,
+                clean: true,
+                left_ref: &left_ref,
+                right_ref: &args.right,
+                left_id,
+                right_id,
+                base_id: result.ancestor,
+                result_revision: Some(rev_id),
+                result_tree,
+                ref_updated: true,
+                worktree_updated: true,
+                merge_state_written: false,
+                conflicts: vec![],
+            })?;
+        } else {
+            println!("Integrated successfully: {rev_id}");
+        }
     } else {
         if args.dry_run {
-            println!(
-                "Dry run: merge would have {} conflict(s).",
-                result.conflicts.len()
-            );
-            for c in &result.conflicts {
-                println!("  CONFLICT: {} ({})", c.file_path, c.codec_id);
+            if args.json {
+                let conflicts = conflict_receipts(&store, &result.conflicts)?;
+                print_integrate_json(IntegrateJson {
+                    dry_run: true,
+                    clean: false,
+                    left_ref: &left_ref,
+                    right_ref: &args.right,
+                    left_id,
+                    right_id,
+                    base_id: result.ancestor,
+                    result_revision: None,
+                    result_tree: result.revision.tree,
+                    ref_updated: false,
+                    worktree_updated: false,
+                    merge_state_written: false,
+                    conflicts,
+                })?;
+            } else {
+                println!(
+                    "Dry run: merge would have {} conflict(s).",
+                    result.conflicts.len()
+                );
+                for c in &result.conflicts {
+                    print_conflict_explanation(&store, c)?;
+                }
+                println!("  Conflict artifacts skipped.");
+                println!("  Merge state write skipped.");
             }
-            println!("  Conflict artifacts skipped.");
-            println!("  Merge state write skipped.");
             return Ok(());
         }
 
@@ -171,10 +230,13 @@ pub fn run(args: IntegrateArgs) -> anyhow::Result<()> {
                 }
             }
 
+            let explanation = explain_conflict(&store, conflict)?;
             conflict_entries.push(ConflictEntry {
                 file_path: conflict.file_path.clone(),
                 conflict_id,
                 codec_id: conflict.codec_id.clone(),
+                reason: Some(explanation.reason),
+                regions: explanation.regions,
             });
         }
 
@@ -200,16 +262,228 @@ pub fn run(args: IntegrateArgs) -> anyhow::Result<()> {
             }
         }
 
-        println!(
-            "Merge has {} conflict(s). Resolve them and run `claw snapshot` to complete.",
-            result.conflicts.len()
-        );
-        for c in &result.conflicts {
-            println!("  CONFLICT: {} ({})", c.file_path, c.codec_id);
+        if args.json {
+            let conflicts = conflict_receipts(&store, &result.conflicts)?;
+            print_integrate_json(IntegrateJson {
+                dry_run: false,
+                clean: false,
+                left_ref: &left_ref,
+                right_ref: &args.right,
+                left_id,
+                right_id,
+                base_id: result.ancestor,
+                result_revision: None,
+                result_tree: result.revision.tree,
+                ref_updated: false,
+                worktree_updated: true,
+                merge_state_written: true,
+                conflicts,
+            })?;
+        } else {
+            println!(
+                "Merge has {} conflict(s). Resolve them and run `claw snapshot` to complete.",
+                result.conflicts.len()
+            );
+            for c in &result.conflicts {
+                print_conflict_explanation(&store, c)?;
+            }
         }
     }
 
     Ok(())
+}
+
+struct IntegrateJson<'a> {
+    dry_run: bool,
+    clean: bool,
+    left_ref: &'a str,
+    right_ref: &'a str,
+    left_id: ObjectId,
+    right_id: ObjectId,
+    base_id: ObjectId,
+    result_revision: Option<ObjectId>,
+    result_tree: Option<ObjectId>,
+    ref_updated: bool,
+    worktree_updated: bool,
+    merge_state_written: bool,
+    conflicts: Vec<serde_json::Value>,
+}
+
+fn print_integrate_json(receipt: IntegrateJson<'_>) -> anyhow::Result<()> {
+    let value = serde_json::json!({
+        "schema_version": 1,
+        "action": "integrate",
+        "dry_run": receipt.dry_run,
+        "clean": receipt.clean,
+        "left_ref": receipt.left_ref,
+        "right_ref": receipt.right_ref,
+        "left_revision": receipt.left_id.to_string(),
+        "right_revision": receipt.right_id.to_string(),
+        "base_revision": receipt.base_id.to_string(),
+        "result_revision": receipt.result_revision.map(|id| id.to_string()),
+        "result_tree": receipt.result_tree.map(|id| id.to_string()),
+        "ref_updated": receipt.ref_updated,
+        "worktree_updated": receipt.worktree_updated,
+        "merge_state_written": receipt.merge_state_written,
+        "conflict_count": receipt.conflicts.len(),
+        "conflicts": receipt.conflicts,
+    });
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn conflict_receipts(
+    store: &ClawStore,
+    conflicts: &[Conflict],
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    conflicts
+        .iter()
+        .map(|conflict| {
+            let explanation = explain_conflict(store, conflict)?;
+            Ok(serde_json::json!({
+                "path": &conflict.file_path,
+                "codec": &conflict.codec_id,
+                "reason": explanation.reason,
+                "regions": explanation.regions.iter().map(|region| serde_json::json!({
+                    "side": &region.side,
+                    "patch_id": &region.patch_id,
+                    "op_type": &region.op_type,
+                    "address": &region.address,
+                    "old_bytes": region.old_bytes,
+                    "new_bytes": region.new_bytes,
+                })).collect::<Vec<_>>(),
+            }))
+        })
+        .collect()
+}
+
+struct ConflictExplanation {
+    reason: String,
+    regions: Vec<ConflictRegion>,
+}
+
+fn print_conflict_explanation(store: &ClawStore, conflict: &Conflict) -> anyhow::Result<()> {
+    let explanation = explain_conflict(store, conflict)?;
+    println!("  CONFLICT: {} ({})", conflict.file_path, conflict.codec_id);
+    println!("    reason: {}", explanation.reason);
+    if !explanation.regions.is_empty() {
+        println!("    collided regions:");
+        for region in &explanation.regions {
+            println!(
+                "      {} {} at {} ({})",
+                region.side, region.op_type, region.address, region.patch_id
+            );
+        }
+    }
+    Ok(())
+}
+
+fn explain_conflict(store: &ClawStore, conflict: &Conflict) -> anyhow::Result<ConflictExplanation> {
+    let left_regions = collect_conflict_regions(store, "left", &conflict.left_patch_ids)?;
+    let right_regions = collect_conflict_regions(store, "right", &conflict.right_patch_ids)?;
+    let mut regions = left_regions.clone();
+    regions.extend(right_regions.clone());
+
+    let left_addresses = left_regions
+        .iter()
+        .map(|region| region.address.as_str())
+        .collect::<Vec<_>>();
+    let right_addresses = right_regions
+        .iter()
+        .map(|region| region.address.as_str())
+        .collect::<Vec<_>>();
+    let shared = left_addresses
+        .iter()
+        .copied()
+        .filter(|address| right_addresses.contains(address))
+        .collect::<Vec<_>>();
+
+    let region = if !shared.is_empty() {
+        shared
+            .iter()
+            .map(|address| describe_region(&conflict.codec_id, address))
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        let left = left_addresses
+            .first()
+            .map(|address| describe_region(&conflict.codec_id, address))
+            .unwrap_or_else(|| "the left patch stream".to_string());
+        let right = right_addresses
+            .first()
+            .map(|address| describe_region(&conflict.codec_id, address))
+            .unwrap_or_else(|| "the right patch stream".to_string());
+        format!("{left} and {right}")
+    };
+
+    let left_ops = summarize_side_ops(&left_regions);
+    let right_ops = summarize_side_ops(&right_regions);
+    let reason = format!(
+        "left {left_ops} and right {right_ops} both touched {region}; the {} codec could not commute those operations or produce a conflict-free three-way merge",
+        conflict.codec_id
+    );
+
+    Ok(ConflictExplanation { reason, regions })
+}
+
+fn collect_conflict_regions(
+    store: &ClawStore,
+    side: &str,
+    patch_ids: &[ObjectId],
+) -> anyhow::Result<Vec<ConflictRegion>> {
+    let mut regions = Vec::new();
+    for patch_id in patch_ids {
+        let Object::Patch(patch) = store.load_object(patch_id)? else {
+            continue;
+        };
+        for op in &patch.ops {
+            regions.push(region_from_op(side, patch_id, op));
+        }
+    }
+    Ok(regions)
+}
+
+fn region_from_op(side: &str, patch_id: &ObjectId, op: &PatchOp) -> ConflictRegion {
+    ConflictRegion {
+        side: side.to_string(),
+        patch_id: patch_id.to_string(),
+        op_type: op.op_type.clone(),
+        address: op.address.clone(),
+        old_bytes: op.old_data.as_ref().map(Vec::len),
+        new_bytes: op.new_data.as_ref().map(Vec::len),
+    }
+}
+
+fn summarize_side_ops(regions: &[ConflictRegion]) -> String {
+    if regions.is_empty() {
+        return "made no inspectable operation".to_string();
+    }
+    let mut parts = regions
+        .iter()
+        .map(|region| format!("{} at {}", region.op_type, region.address))
+        .collect::<Vec<_>>();
+    parts.sort();
+    parts.dedup();
+    parts.join(", ")
+}
+
+fn describe_region(codec_id: &str, address: &str) -> String {
+    match codec_id {
+        "text/line" => address
+            .strip_prefix('L')
+            .and_then(|line| line.parse::<usize>().ok())
+            .map(|line| format!("line {}", line + 1))
+            .unwrap_or_else(|| format!("text region {address}")),
+        "json/tree" => {
+            if address == "/" {
+                "JSON root".to_string()
+            } else {
+                format!("JSON path {address}")
+            }
+        }
+        "binary" => "the binary payload".to_string(),
+        _ => format!("semantic address {address}"),
+    }
 }
 
 fn resolve_revision_ref_or_id(store: &ClawStore, value: &str) -> anyhow::Result<ObjectId> {
@@ -401,7 +675,7 @@ fn load_agent_registry(store: &ClawStore) -> anyhow::Result<AgentRegistry> {
         let Ok(record) = serde_json::from_slice::<AgentRegistration>(&blob.data) else {
             continue;
         };
-        if record.is_revoked() {
+        if record.is_revoked() || record.is_quarantined() {
             continue;
         }
         let normalized_key = match normalize_public_key_hex(&record.public_key) {
@@ -714,6 +988,8 @@ mod tests {
             private_key: None,
             revoked_at_ms: None,
             revocation_reason: None,
+            quarantined_at_ms: None,
+            quarantine_reason: None,
             created_at_ms: now,
             updated_at_ms: now,
         };
@@ -737,6 +1013,37 @@ mod tests {
             private_key: None,
             revoked_at_ms: Some(2),
             revocation_reason: Some("compromised".to_string()),
+            quarantined_at_ms: None,
+            quarantine_reason: None,
+            created_at_ms: 1,
+            updated_at_ms: 2,
+        };
+        let blob = Object::Blob(Blob {
+            data: serde_json::to_vec(&record).unwrap(),
+            media_type: Some("application/json".to_string()),
+        });
+        let blob_id = store.store_object(&blob).unwrap();
+        store.set_ref("agents/agent", &blob_id).unwrap();
+
+        let registry = load_agent_registry(&store).unwrap();
+        assert!(registry.by_agent_id.is_empty());
+        assert!(registry.by_public_key.is_empty());
+    }
+
+    #[test]
+    fn agent_registry_skips_quarantined_registrations() {
+        let (_tmp, store) = test_store();
+        let keypair = KeyPair::generate();
+        let record = AgentRegistration {
+            schema_version: 2,
+            agent_id: "agent".to_string(),
+            agent_version: Some("test".to_string()),
+            public_key: hex::encode(keypair.public_key_bytes()),
+            private_key: None,
+            revoked_at_ms: None,
+            revocation_reason: None,
+            quarantined_at_ms: Some(2),
+            quarantine_reason: Some("runner drift".to_string()),
             created_at_ms: 1,
             updated_at_ms: 2,
         };

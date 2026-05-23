@@ -25,8 +25,10 @@ claw change --json list --intent <intent-id>
 claw change --json show <change-id>
 ```
 
-Create/show/status output includes a `change` object and stored object ID when
-available. List output is a `changes` array.
+JSON output emits schema version `1`. Create/show/status output includes
+`action: "change.create"`, `"change.show"`, or `"change.status"` plus a
+`change` object and stored object ID when available. List output includes
+`action: "change.list"`, `change_count`, `filters`, and a `changes` array.
 
 ## Exit Codes
 

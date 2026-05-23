@@ -163,3 +163,7 @@ A v1-compliant plugin must:
 - Support `plugin.initialize` and `plugin.shutdown`.
 - Enforce timeout handling and produce structured errors.
 - Operate correctly under process isolation and sandbox restrictions.
+
+Use `claw plugin --json check --plugin <path>` to record a machine-readable
+initialize-handshake receipt in CI or release evidence. The receipt uses CLI
+schema version `1` with `action: "plugin.check"`.

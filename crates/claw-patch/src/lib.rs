@@ -1,8 +1,9 @@
 //! Codec-aware diff, patch, invert, commute, and merge behavior.
 //!
 //! Claw VCS uses codecs so different content types can have appropriate merge
-//! semantics. Built-in codecs cover line-oriented text, structural JSON, and
-//! binary replacement.
+//! semantics. Built-in codecs cover line-oriented text, structural JSON,
+//! TOML/YAML/spec documents, notebooks, source AST-style declarations,
+//! migrations, infrastructure blocks, and binary replacement.
 //!
 #![deny(missing_docs)]
 
@@ -33,6 +34,8 @@ pub mod error;
 pub mod json_tree;
 /// Codec registry and path-to-codec lookup.
 pub mod registry;
+/// Structured document codecs built on JSON-pointer-style tree operations.
+pub mod structured;
 /// Line-oriented text diff and merge codec.
 pub mod text_line;
 

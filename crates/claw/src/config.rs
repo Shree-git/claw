@@ -287,11 +287,8 @@ pub fn load_or_default_config(root: &Path) -> anyhow::Result<ClawConfigV1> {
 #[allow(dead_code)]
 pub fn save_config(root: &Path, config: &ClawConfigV1) -> anyhow::Result<()> {
     let path = config_file_path(root);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let content = toml::to_string_pretty(config)?;
-    std::fs::write(path, content)?;
+    atomic_write(&path, content.as_bytes())?;
     Ok(())
 }
 
@@ -361,11 +358,35 @@ pub fn plan_config_migration(root: &Path) -> anyhow::Result<ConfigMigrationPlan>
 
 pub fn apply_config_migration(root: &Path) -> anyhow::Result<ConfigMigrationPlan> {
     let plan = plan_config_migration(root)?;
-    if let Some(parent) = plan.target.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&plan.target, &plan.next_content)?;
+    atomic_write(&plan.target, plan.next_content.as_bytes())?;
     Ok(plan)
+}
+
+fn atomic_write(path: &Path, content: &[u8]) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("config path has no parent: {}", path.display()))?;
+    std::fs::create_dir_all(parent)?;
+
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    {
+        use std::io::Write;
+
+        let file = temp.as_file_mut();
+        file.write_all(content)?;
+        file.sync_all()?;
+    }
+    temp.persist(path).map_err(|err| {
+        anyhow::anyhow!(
+            "failed to replace config file {}: {}",
+            path.display(),
+            err.error
+        )
+    })?;
+    if let Ok(parent_dir) = std::fs::File::open(parent) {
+        parent_dir.sync_all()?;
+    }
+    Ok(())
 }
 
 pub fn default_profile(config: &ClawConfigV1) -> &str {
@@ -427,6 +448,31 @@ mod tests {
         assert_eq!(plan.target, claw_dir.join("config.toml"));
         assert!(plan.next_content.contains("config_version = 1"));
         assert!(plan.diff.contains(".claw/config.toml"));
+    }
+
+    #[test]
+    fn apply_config_migration_writes_config_atomically() {
+        let temp = tempfile::tempdir().expect("create tempdir");
+        let root = temp.path();
+        let claw_dir = root.join(".claw");
+        fs::create_dir_all(&claw_dir).expect("create .claw dir");
+        fs::write(claw_dir.join("repo.toml"), "version = 7\n").expect("write legacy repo.toml");
+
+        let applied = apply_config_migration(root).expect("apply config migration");
+        assert_eq!(applied.target, claw_dir.join("config.toml"));
+
+        let loaded = load_or_default_config(root).expect("load migrated config");
+        assert_eq!(loaded.config_version, SUPPORTED_CONFIG_VERSION);
+
+        let temp_entries = fs::read_dir(&claw_dir)
+            .expect("read .claw dir")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".tmp"))
+            .count();
+        assert_eq!(
+            temp_entries, 0,
+            "atomic config write should not leave temp files"
+        );
     }
 
     #[test]

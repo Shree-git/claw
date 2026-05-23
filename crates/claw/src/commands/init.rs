@@ -35,14 +35,20 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
         "claw snapshot -m \"initial snapshot\"",
         "claw intent create --title \"describe the next change\"",
     ];
+    let claw_dir = path.join(".claw");
 
     if args.dry_run {
         if args.json {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
+                    "schema_version": 1,
+                    "action": "init",
+                    "initialized": false,
                     "path": path.display().to_string(),
+                    "claw_dir": claw_dir.display().to_string(),
                     "dry_run": true,
+                    "already_initialized": false,
                     "created": false,
                     "head": "heads/main",
                     "next_steps": next_steps,
@@ -61,8 +67,13 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": 1,
+                "action": "init",
+                "initialized": true,
                 "path": path.display().to_string(),
+                "claw_dir": claw_dir.display().to_string(),
                 "dry_run": false,
+                "already_initialized": false,
                 "created": true,
                 "head": "heads/main",
                 "next_steps": next_steps,

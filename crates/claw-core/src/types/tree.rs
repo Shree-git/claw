@@ -78,20 +78,31 @@ fn is_numbered_windows_device(name: &str, prefix: &str) -> bool {
 }
 
 impl Tree {
-    /// Validate entry names and reject duplicate basenames.
+    /// Validate entry names and reject duplicate or portable-colliding basenames.
     pub fn validate(&self) -> Result<(), CoreError> {
-        let mut seen = std::collections::HashSet::with_capacity(self.entries.len());
+        let mut seen = std::collections::HashMap::with_capacity(self.entries.len());
         for entry in &self.entries {
             validate_tree_entry_name(&entry.name)?;
-            if !seen.insert(entry.name.as_str()) {
+            let key = portable_tree_entry_key(&entry.name);
+            if let Some(existing) = seen.insert(key, entry.name.as_str()) {
+                if existing == entry.name.as_str() {
+                    return Err(CoreError::Deserialization(format!(
+                        "duplicate tree entry name: {}",
+                        entry.name
+                    )));
+                }
                 return Err(CoreError::Deserialization(format!(
-                    "duplicate tree entry name: {}",
-                    entry.name
+                    "tree entry names collide on case-insensitive filesystems: {} and {}",
+                    existing, entry.name
                 )));
             }
         }
         Ok(())
     }
+}
+
+fn portable_tree_entry_key(name: &str) -> String {
+    name.chars().flat_map(|ch| ch.to_lowercase()).collect()
 }
 
 #[cfg(test)]
@@ -121,6 +132,34 @@ mod tests {
                 "reserved device name should be rejected: {name}"
             );
         }
+    }
+
+    #[test]
+    fn rejects_case_insensitive_duplicate_tree_entry_names() {
+        use crate::ObjectId;
+
+        let tree = super::Tree {
+            entries: vec![
+                super::TreeEntry {
+                    name: "README.md".to_string(),
+                    mode: super::FileMode::Regular,
+                    object_id: ObjectId::from_bytes([0x11; 32]),
+                },
+                super::TreeEntry {
+                    name: "readme.md".to_string(),
+                    mode: super::FileMode::Regular,
+                    object_id: ObjectId::from_bytes([0x22; 32]),
+                },
+            ],
+        };
+
+        let err = tree
+            .validate()
+            .expect_err("case-insensitive duplicate tree entries should be rejected");
+        assert!(
+            err.to_string().contains("case-insensitive filesystems"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

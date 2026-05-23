@@ -64,6 +64,13 @@ pub fn run(args: ShowArgs) -> anyhow::Result<()> {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": 1,
+                "action": "show",
+                "query": args.object,
+                "object_id": id.to_string(),
+                "object_hex": id.to_hex(),
+                "type": type_name,
+                "value": serde_json::to_value(&obj)?,
                 "object": {
                     "id": id.to_string(),
                     "hex": id.to_hex(),

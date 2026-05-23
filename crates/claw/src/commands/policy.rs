@@ -1,10 +1,22 @@
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
 use clap::{Args, Subcommand};
+use serde::Serialize;
 
 use claw_core::hash::content_hash;
 use claw_core::id::ObjectId;
 use claw_core::object::Object;
-use claw_core::types::{Capsule, EvidencePolicy, Policy, Revision, Visibility};
-use claw_policy::{evaluator::evaluate_policy, PolicyContext};
+use claw_core::types::{Capsule, CapsulePublic, EvidencePolicy, Policy, Revision, Visibility};
+use claw_policy::checks::{
+    verify_authorized_recipients, verify_evidence_freshness, verify_min_trust_score,
+    verify_quarantine_lane, verify_required_checks, verify_required_reviewers,
+    verify_sensitive_paths,
+};
+use claw_policy::plugin::evaluate_plugins;
+use claw_policy::visibility::check_visibility;
+use claw_policy::PolicyContext;
+use claw_store::tree_diff::diff_trees;
 use claw_store::ClawStore;
 
 use crate::config::find_repo_root;
@@ -101,10 +113,15 @@ enum PolicyCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Evaluate a policy against a revision and capsule
+    /// Evaluate or simulate a policy against a revision and capsule
+    #[command(alias = "simulate")]
     Eval {
         /// Policy ID or policy ref
-        id: String,
+        #[arg(required_unless_present = "policy_file")]
+        id: Option<String>,
+        /// Evaluate an arbitrary policy JSON/TOML file without storing it.
+        #[arg(long = "policy-file")]
+        policy_file: Option<PathBuf>,
         /// Revision ref, hex ID, or clw_ display ID
         #[arg(long)]
         revision: String,
@@ -131,6 +148,14 @@ enum PolicyCommand {
     Show {
         /// Policy ID
         id: String,
+    },
+    /// Lint policies for dangerous or surprising enforcement gaps
+    Lint {
+        /// Policy ID. Omit to lint all stored policies.
+        id: Option<String>,
+        /// Output lint report as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// List policies
     List,
@@ -206,6 +231,7 @@ pub fn run(args: PolicyArgs) -> anyhow::Result<()> {
         }
         PolicyCommand::Eval {
             id,
+            policy_file,
             revision,
             capsule,
             signer_agents,
@@ -216,6 +242,7 @@ pub fn run(args: PolicyArgs) -> anyhow::Result<()> {
         } => {
             run_eval(EvalRequest {
                 policy_id: id,
+                policy_file,
                 revision_ref: revision,
                 capsule_ref: capsule,
                 signer_agents,
@@ -289,6 +316,9 @@ pub fn run(args: PolicyArgs) -> anyhow::Result<()> {
                 }
             }
         }
+        PolicyCommand::Lint { id, json } => {
+            run_lint(id.as_deref(), json)?;
+        }
         PolicyCommand::List => {
             let root = find_repo_root()?;
             let store = ClawStore::open(&root)?;
@@ -318,6 +348,333 @@ pub fn run(args: PolicyArgs) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PolicyLintReport {
+    schema_version: u8,
+    action: &'static str,
+    policy_count: usize,
+    finding_count: usize,
+    danger_count: usize,
+    warning_count: usize,
+    policies: Vec<PolicyLintSubject>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PolicyLintSubject {
+    id: String,
+    ref_name: String,
+    object: String,
+    findings: Vec<PolicyLintFinding>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PolicyLintFinding {
+    severity: &'static str,
+    code: &'static str,
+    message: String,
+    why: String,
+    try_command: Option<String>,
+}
+
+fn run_lint(id: Option<&str>, json: bool) -> anyhow::Result<()> {
+    let root = find_repo_root()?;
+    let store = ClawStore::open(&root)?;
+    let subjects = if let Some(id) = id {
+        let (ref_name, object, policy) = load_policy(&store, id)?;
+        vec![lint_subject(ref_name, object, policy)]
+    } else {
+        let mut subjects = Vec::new();
+        for (ref_name, object) in store.list_refs("policies")? {
+            if let Ok(Object::Policy(policy)) = store.load_object(&object) {
+                subjects.push(lint_subject(ref_name, object, policy));
+            }
+        }
+        subjects
+    };
+    let report = lint_report(subjects);
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print_lint_report(&report);
+    }
+
+    Ok(())
+}
+
+fn lint_subject(ref_name: String, object: ObjectId, policy: Policy) -> PolicyLintSubject {
+    PolicyLintSubject {
+        id: policy.policy_id.clone(),
+        ref_name,
+        object: object.to_string(),
+        findings: lint_policy(&policy),
+    }
+}
+
+fn lint_report(policies: Vec<PolicyLintSubject>) -> PolicyLintReport {
+    let finding_count = policies
+        .iter()
+        .map(|subject| subject.findings.len())
+        .sum::<usize>();
+    let danger_count = policies
+        .iter()
+        .flat_map(|subject| subject.findings.iter())
+        .filter(|finding| finding.severity == "danger")
+        .count();
+    let warning_count = policies
+        .iter()
+        .flat_map(|subject| subject.findings.iter())
+        .filter(|finding| finding.severity == "warning")
+        .count();
+    PolicyLintReport {
+        schema_version: 1,
+        action: "policy.lint",
+        policy_count: policies.len(),
+        finding_count,
+        danger_count,
+        warning_count,
+        policies,
+    }
+}
+
+fn print_lint_report(report: &PolicyLintReport) {
+    if report.policies.is_empty() {
+        println!("No policies found.");
+        return;
+    }
+
+    for subject in &report.policies {
+        println!(
+            "Policy {}: {} finding(s)",
+            subject.id,
+            subject.findings.len()
+        );
+        if subject.findings.is_empty() {
+            println!("  ok: no lint findings");
+            continue;
+        }
+        for finding in &subject.findings {
+            println!(
+                "  {} {}: {}",
+                finding.severity.to_ascii_uppercase(),
+                finding.code,
+                finding.message
+            );
+            println!("    why: {}", finding.why);
+            if let Some(command) = &finding.try_command {
+                println!("    try: {command}");
+            }
+        }
+    }
+}
+
+fn lint_policy(policy: &Policy) -> Vec<PolicyLintFinding> {
+    let mut findings = Vec::new();
+    let enforces_checks = !policy.required_checks.is_empty();
+    let enforces_reviewers = !policy.required_reviewers.is_empty();
+    let enforces_private_visibility = matches!(
+        policy.visibility,
+        Visibility::Private | Visibility::EncryptedMetadataRequired
+    );
+    let enforces_recipients = !policy.authorized_recipients.is_empty();
+    let enforces_trust = policy.min_trust_score.is_some();
+    let enforces_quarantine = policy.quarantine_lane;
+
+    if !enforces_checks
+        && !enforces_reviewers
+        && !enforces_private_visibility
+        && !enforces_recipients
+        && !enforces_trust
+        && !enforces_quarantine
+    {
+        findings.push(finding(
+            "danger",
+            "POLICY_NO_ENFORCEMENT",
+            "policy does not enforce checks, reviewers, trust, private metadata, recipients, or quarantine",
+            "A policy with only an ID and public visibility will allow almost everything, which is rarely useful outside demos.",
+            Some(format!(
+                "claw policy apply --id {} --check test --dry-run",
+                policy.policy_id
+            )),
+        ));
+    }
+
+    if !policy.sensitive_paths.is_empty() && !enforces_private_visibility && !enforces_recipients {
+        findings.push(finding(
+            "danger",
+            "SENSITIVE_PATHS_WITH_PUBLIC_VISIBILITY",
+            "sensitive paths are configured without private metadata or recipient enforcement",
+            "Sensitive path policies should make the capsule privacy requirement obvious; otherwise sensitive changes can pass with public-only capsule metadata.",
+            Some(format!(
+                "claw policy apply --id {} --visibility encrypted-metadata-required --sensitive-path <glob> --dry-run",
+                policy.policy_id
+            )),
+        ));
+    }
+
+    if policy.evidence_policy.require_fresh_evidence && policy.required_checks.is_empty() {
+        findings.push(finding(
+            "warning",
+            "FRESHNESS_WITHOUT_REQUIRED_CHECKS",
+            "fresh-evidence checks apply to any capsule evidence because no required checks are named",
+            "This can be intentional, but most release policies should name the exact checks that must be fresh and passing.",
+            Some(format!(
+                "claw policy apply --id {} --check test --require-fresh-evidence --dry-run",
+                policy.policy_id
+            )),
+        ));
+    }
+
+    if policy.evidence_policy.require_fresh_evidence
+        && policy.evidence_policy.trusted_runner_identities.is_empty()
+    {
+        findings.push(finding(
+            "warning",
+            "FRESHNESS_WITHOUT_TRUSTED_RUNNER",
+            "fresh evidence does not restrict runner identities",
+            "Evidence can carry runner metadata, but without trusted runners the policy does not distinguish CI-produced evidence from weaker local evidence.",
+            Some(format!(
+                "claw policy apply --id {} --trusted-runner github-actions/release --require-fresh-evidence --dry-run",
+                policy.policy_id
+            )),
+        ));
+    }
+
+    if policy.quarantine_lane && policy.sensitive_paths.is_empty() {
+        findings.push(finding(
+            "warning",
+            "QUARANTINE_WITHOUT_SENSITIVE_PATHS",
+            "quarantine lane is enabled without sensitive path globs",
+            "The evaluator treats this as a broad automated-integration block, which may surprise operators expecting path-scoped quarantine.",
+            Some(format!(
+                "claw policy apply --id {} --sensitive-path secrets/** --quarantine-lane --dry-run",
+                policy.policy_id
+            )),
+        ));
+    }
+
+    if let Some(score) = policy.min_trust_score.as_deref() {
+        if parse_trust_score(score).is_err() {
+            findings.push(finding(
+                "danger",
+                "INVALID_TRUST_SCORE",
+                "minimum trust score cannot be parsed",
+                "Policy evaluation fails closed when the threshold is malformed.",
+                Some(format!(
+                    "claw policy apply --id {} --min-trust-score 80% --dry-run",
+                    policy.policy_id
+                )),
+            ));
+        }
+    } else if enforces_checks || enforces_reviewers {
+        findings.push(finding(
+            "warning",
+            "NO_TRUST_SCORE_THRESHOLD",
+            "policy has checks or reviewers but no minimum trust score",
+            "A trust threshold is optional, but adding one makes weak or partial evidence easier to reject consistently.",
+            Some(format!(
+                "claw policy apply --id {} --min-trust-score 80% --dry-run",
+                policy.policy_id
+            )),
+        ));
+    }
+
+    let overlap =
+        intersection_case_insensitive(&policy.authorized_recipients, &policy.revoked_recipients);
+    if !overlap.is_empty() {
+        findings.push(finding(
+            "danger",
+            "RECIPIENT_AUTH_REVOKE_OVERLAP",
+            format!(
+                "recipient(s) appear in both authorized and revoked lists: {}",
+                overlap.join(", ")
+            ),
+            "A capsule cannot satisfy a policy that both requires and forbids the same recipient envelope.",
+            Some(format!(
+                "claw policy apply --id {} --recipient <active-recipient> --dry-run",
+                policy.policy_id
+            )),
+        ));
+    }
+
+    for (field, values) in [
+        ("required_checks", &policy.required_checks),
+        ("required_reviewers", &policy.required_reviewers),
+        ("sensitive_paths", &policy.sensitive_paths),
+        ("authorized_recipients", &policy.authorized_recipients),
+        ("revoked_recipients", &policy.revoked_recipients),
+    ] {
+        let duplicates = duplicate_values(values);
+        if !duplicates.is_empty() {
+            findings.push(finding(
+                "warning",
+                "DUPLICATE_POLICY_VALUES",
+                format!(
+                    "{} contains duplicate value(s): {}",
+                    field,
+                    duplicates.join(", ")
+                ),
+                "Duplicate values do not strengthen enforcement and make policy review noisier.",
+                None,
+            ));
+        }
+    }
+
+    findings
+}
+
+fn finding(
+    severity: &'static str,
+    code: &'static str,
+    message: impl Into<String>,
+    why: impl Into<String>,
+    try_command: Option<String>,
+) -> PolicyLintFinding {
+    PolicyLintFinding {
+        severity,
+        code,
+        message: message.into(),
+        why: why.into(),
+        try_command,
+    }
+}
+
+fn duplicate_values(values: &[String]) -> Vec<String> {
+    let mut counts = HashMap::<String, usize>::new();
+    for value in values {
+        *counts.entry(value.to_ascii_lowercase()).or_default() += 1;
+    }
+    let mut duplicates = values
+        .iter()
+        .filter(|value| {
+            counts
+                .get(&value.to_ascii_lowercase())
+                .copied()
+                .unwrap_or(0)
+                > 1
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    duplicates.sort();
+    duplicates.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    duplicates
+}
+
+fn intersection_case_insensitive(left: &[String], right: &[String]) -> Vec<String> {
+    let right = right
+        .iter()
+        .map(|value| value.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    let mut overlap = left
+        .iter()
+        .filter(|value| right.contains(&value.to_ascii_lowercase()))
+        .cloned()
+        .collect::<Vec<_>>();
+    overlap.sort();
+    overlap.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    overlap
 }
 
 struct PolicyBuildOptions {
@@ -421,6 +778,8 @@ fn print_policy_apply_json(
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "action": "policy.apply",
             "dry_run": dry_run,
             "ref": ref_name,
             "old_object": old.map(|id| id.to_string()),
@@ -438,7 +797,8 @@ fn policy_object_id(policy: &Policy) -> anyhow::Result<ObjectId> {
 }
 
 struct EvalRequest {
-    policy_id: String,
+    policy_id: Option<String>,
+    policy_file: Option<PathBuf>,
     revision_ref: String,
     capsule_ref: Option<String>,
     signer_agents: Vec<String>,
@@ -448,20 +808,60 @@ struct EvalRequest {
     json: bool,
 }
 
+#[derive(Debug, Serialize)]
+struct SimulationStep {
+    name: &'static str,
+    description: &'static str,
+    passed: bool,
+    reason: Option<String>,
+    inputs: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+struct SimulationFailure {
+    step: &'static str,
+    reason: String,
+}
+
 fn run_eval(request: EvalRequest) -> anyhow::Result<()> {
     let root = find_repo_root()?;
     let store = ClawStore::open(&root)?;
-    let (policy_ref, policy_obj_id, policy) = load_policy(&store, &request.policy_id)?;
+    let EvalPolicySource {
+        ref_name: policy_ref,
+        source: policy_source,
+        object_id: policy_obj_id,
+        policy,
+    } = load_eval_policy(
+        &store,
+        request.policy_id.as_deref(),
+        request.policy_file.as_deref(),
+    )?;
     let (revision_id, revision) = load_revision(&store, &request.revision_ref)?;
-    let (capsule_id, capsule) = match request.capsule_ref.as_deref() {
-        Some(value) => load_capsule(&store, value)?,
-        None => load_default_capsule(&store, &revision_id, &revision)?,
+    let (capsule_id, capsule, capsule_source) = match request.capsule_ref.as_deref() {
+        Some(value) => {
+            let (capsule_id, capsule) = load_capsule(&store, value)?;
+            (Some(capsule_id), capsule, "explicit")
+        }
+        None => match load_default_capsule(&store, &revision_id, &revision)? {
+            Some((capsule_id, capsule)) => (Some(capsule_id), capsule, "default"),
+            None => (
+                None,
+                synthetic_missing_capsule(revision_id),
+                "synthetic_missing",
+            ),
+        },
+    };
+    let derived_touched_paths = derive_revision_touched_paths(&store, &revision)?;
+    let (touched_paths, touched_paths_source) = if request.touched_paths.is_empty() {
+        (derived_touched_paths.clone(), "revision_patches")
+    } else {
+        (request.touched_paths, "cli")
     };
     let context = PolicyContext {
         revision_id: Some(revision_id),
         signer_agent_ids: request.signer_agents,
         signer_key_ids: request.signer_keys,
-        touched_paths: request.touched_paths,
+        touched_paths,
         trust_score: request
             .trust_score
             .as_deref()
@@ -471,19 +871,28 @@ fn run_eval(request: EvalRequest) -> anyhow::Result<()> {
         now_ms: Some(current_time_ms()),
     };
 
-    let evaluation = evaluate_policy(&policy, &revision, &capsule, &context);
-    let error = evaluation.as_ref().err().map(ToString::to_string);
+    let steps = simulate_policy_steps(&policy, &revision, &capsule, &context);
+    let error = steps
+        .iter()
+        .find(|step| !step.passed)
+        .and_then(|step| step.reason.clone());
     let allowed = error.is_none();
+    let failed_steps = simulation_failures(&steps);
+    let passed_step_count = steps.len().saturating_sub(failed_steps.len());
+    let first_failed_step = failed_steps.first();
 
     if request.json {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": 1,
+                "action": "policy.eval",
                 "allowed": allowed,
                 "error": error,
                 "policy": {
                     "id": &policy.policy_id,
                     "ref": &policy_ref,
+                    "source": policy_source,
                     "object": policy_obj_id.to_string(),
                 },
                 "revision": {
@@ -491,21 +900,37 @@ fn run_eval(request: EvalRequest) -> anyhow::Result<()> {
                     "hex": revision_id.to_hex(),
                 },
                 "capsule": {
-                    "id": capsule_id.to_string(),
-                    "hex": capsule_id.to_hex(),
+                    "id": capsule_id.map(|id| id.to_string()),
+                    "hex": capsule_id.map(|id| id.to_hex()),
+                    "source": capsule_source,
+                    "synthetic": capsule_id.is_none(),
                 },
                 "context": {
                     "signer_agent_ids": context.signer_agent_ids,
                     "signer_key_ids": context.signer_key_ids,
                     "touched_paths": context.touched_paths,
+                    "touched_paths_source": touched_paths_source,
+                    "derived_touched_paths": derived_touched_paths,
                     "trust_score": context.trust_score,
                     "now_ms": context.now_ms,
-                }
+                },
+                "simulation": {
+                    "step_count": steps.len(),
+                    "passed_step_count": passed_step_count,
+                    "failed_step_count": failed_steps.len(),
+                    "first_failed_step": first_failed_step.map(|failure| failure.step),
+                    "first_failure_reason": first_failed_step.map(|failure| failure.reason.as_str()),
+                    "failed_steps": failed_steps,
+                    "steps": steps,
+                },
             }))?
         );
     }
 
-    if let Err(err) = evaluation {
+    if let Some(err) = error {
+        if !request.json {
+            print_simulation_steps(&steps);
+        }
         anyhow::bail!(
             "policy '{}' denied revision {}: {}",
             policy.policy_id,
@@ -515,6 +940,7 @@ fn run_eval(request: EvalRequest) -> anyhow::Result<()> {
     }
 
     if !request.json {
+        print_simulation_steps(&steps);
         println!(
             "Policy '{}' allowed revision {}",
             policy.policy_id,
@@ -523,6 +949,264 @@ fn run_eval(request: EvalRequest) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+struct EvalPolicySource {
+    ref_name: Option<String>,
+    source: serde_json::Value,
+    object_id: ObjectId,
+    policy: Policy,
+}
+
+fn load_eval_policy(
+    store: &ClawStore,
+    id: Option<&str>,
+    policy_file: Option<&Path>,
+) -> anyhow::Result<EvalPolicySource> {
+    match (id, policy_file) {
+        (Some(_), Some(_)) => {
+            anyhow::bail!("pass either a stored policy ID or --policy-file, not both")
+        }
+        (Some(id), None) => {
+            let (ref_name, object_id, policy) = load_policy(store, id)?;
+            Ok(EvalPolicySource {
+                ref_name: Some(ref_name.clone()),
+                source: serde_json::json!({
+                    "kind": "stored",
+                    "ref": ref_name,
+                }),
+                object_id,
+                policy,
+            })
+        }
+        (None, Some(path)) => {
+            let policy = load_policy_file(path)?;
+            let object_id = policy_object_id(&policy)?;
+            Ok(EvalPolicySource {
+                ref_name: None,
+                source: serde_json::json!({
+                    "kind": "file",
+                    "path": path,
+                }),
+                object_id,
+                policy,
+            })
+        }
+        (None, None) => anyhow::bail!("pass a stored policy ID or --policy-file"),
+    }
+}
+
+fn load_policy_file(path: &Path) -> anyhow::Result<Policy> {
+    let bytes = std::fs::read(path)
+        .map_err(|err| anyhow::anyhow!("failed to read policy file {}: {err}", path.display()))?;
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("toml") => {
+            let text = std::str::from_utf8(&bytes)
+                .map_err(|err| anyhow::anyhow!("policy TOML must be UTF-8: {err}"))?;
+            toml::from_str(text).map_err(|err| anyhow::anyhow!("policy file must be TOML: {err}"))
+        }
+        _ => serde_json::from_slice(&bytes)
+            .map_err(|err| anyhow::anyhow!("policy file must be JSON or .toml: {err}")),
+    }
+}
+
+fn simulate_policy_steps(
+    policy: &Policy,
+    revision: &Revision,
+    capsule: &Capsule,
+    context: &PolicyContext,
+) -> Vec<SimulationStep> {
+    let mut steps = Vec::new();
+
+    steps.push(simulation_step(
+        "visibility",
+        "capsule private-field visibility satisfies the policy",
+        serde_json::json!({
+            "visibility": format!("{:?}", policy.visibility),
+            "has_encrypted_private": capsule.encrypted_private.as_ref().is_some_and(|bytes| !bytes.is_empty()),
+            "encryption": capsule.encryption,
+            "key_id": capsule.key_id,
+            "signer_key_ids": context.signer_key_ids,
+        }),
+        || check_visibility(policy, capsule, context),
+    ));
+    steps.push(simulation_step(
+        "required_checks",
+        "all required checks have passing capsule evidence",
+        serde_json::json!({
+            "required_checks": policy.required_checks,
+            "evidence": capsule.public_fields.evidence.iter().map(|evidence| serde_json::json!({
+                "name": evidence.name,
+                "status": evidence.status,
+            })).collect::<Vec<_>>(),
+        }),
+        || verify_required_checks(policy, capsule),
+    ));
+    steps.push(simulation_step(
+        "authorized_recipients",
+        "recipient envelopes satisfy authorized and revoked recipient policy",
+        serde_json::json!({
+            "authorized_recipients": policy.authorized_recipients,
+            "revoked_recipients": policy.revoked_recipients,
+            "capsule_recipients": capsule.recipients.iter().map(|recipient| serde_json::json!({
+                "recipient_id": recipient.recipient_id,
+                "key_id": recipient.key_id,
+                "algorithm": recipient.algorithm,
+            })).collect::<Vec<_>>(),
+        }),
+        || verify_authorized_recipients(policy, capsule),
+    ));
+    steps.push(simulation_step(
+        "evidence_freshness",
+        "required evidence is revision-bound, fresh, and produced by trusted runners",
+        serde_json::json!({
+            "policy": policy.evidence_policy,
+            "revision_id": context.revision_id.map(|id| id.to_string()),
+            "revision_created_at_ms": revision.created_at_ms,
+            "capsule_revision_id": capsule.revision_id.to_string(),
+            "now_ms": context.now_ms,
+        }),
+        || verify_evidence_freshness(policy, revision, capsule, context),
+    ));
+    steps.push(simulation_step(
+        "required_reviewers",
+        "required reviewer IDs are present among verified signer agents or keys",
+        serde_json::json!({
+            "required_reviewers": policy.required_reviewers,
+            "signer_agent_ids": context.signer_agent_ids,
+            "signer_key_ids": context.signer_key_ids,
+        }),
+        || verify_required_reviewers(policy, context),
+    ));
+    steps.push(simulation_step(
+        "sensitive_paths",
+        "sensitive touched paths have required private capsule metadata",
+        serde_json::json!({
+            "sensitive_paths": policy.sensitive_paths,
+            "touched_paths": context.touched_paths,
+            "has_encrypted_private": capsule.encrypted_private.as_ref().is_some_and(|bytes| !bytes.is_empty()),
+        }),
+        || verify_sensitive_paths(policy, capsule, context),
+    ));
+    steps.push(simulation_step(
+        "quarantine_lane",
+        "quarantine lane rules allow this automated evaluation context",
+        serde_json::json!({
+            "quarantine_lane": policy.quarantine_lane,
+            "sensitive_paths": policy.sensitive_paths,
+            "touched_paths": context.touched_paths,
+        }),
+        || verify_quarantine_lane(policy, context),
+    ));
+    steps.push(simulation_step(
+        "min_trust_score",
+        "evaluated trust score meets the policy threshold",
+        serde_json::json!({
+            "min_trust_score": policy.min_trust_score,
+            "trust_score": context.trust_score,
+        }),
+        || verify_min_trust_score(policy, context),
+    ));
+    steps.push(simulation_step(
+        "external_plugins",
+        "all configured external policy plugins allow the evaluation",
+        serde_json::json!({
+            "configured_by": "CLAW_POLICY_PLUGINS",
+        }),
+        || evaluate_plugins(policy, revision, capsule, context),
+    ));
+
+    steps
+}
+
+fn simulation_step<F>(
+    name: &'static str,
+    description: &'static str,
+    inputs: serde_json::Value,
+    check: F,
+) -> SimulationStep
+where
+    F: FnOnce() -> Result<(), claw_policy::PolicyError>,
+{
+    match check() {
+        Ok(()) => SimulationStep {
+            name,
+            description,
+            passed: true,
+            reason: None,
+            inputs,
+        },
+        Err(err) => SimulationStep {
+            name,
+            description,
+            passed: false,
+            reason: Some(err.to_string()),
+            inputs,
+        },
+    }
+}
+
+fn print_simulation_steps(steps: &[SimulationStep]) {
+    println!("Policy simulation:");
+    let failed_steps = simulation_failures(steps);
+    println!(
+        "  Summary: {} passed, {} failed",
+        steps.len().saturating_sub(failed_steps.len()),
+        failed_steps.len()
+    );
+    if let Some(first) = failed_steps.first() {
+        println!("  First failure: {} - {}", first.step, first.reason);
+    }
+    for step in steps {
+        let state = if step.passed { "pass" } else { "fail" };
+        match &step.reason {
+            Some(reason) => println!("  {state}: {} - {reason}", step.name),
+            None => println!("  {state}: {}", step.name),
+        }
+    }
+}
+
+fn derive_revision_touched_paths(
+    store: &ClawStore,
+    revision: &Revision,
+) -> anyhow::Result<Vec<String>> {
+    let mut paths = Vec::new();
+    for patch_id in &revision.patches {
+        let Object::Patch(patch) = store.load_object(patch_id)? else {
+            anyhow::bail!("revision patch ref does not point to a patch object: {patch_id}");
+        };
+        if !paths.iter().any(|path| path == &patch.target_path) {
+            paths.push(patch.target_path);
+        }
+    }
+
+    if paths.is_empty() {
+        let parent_tree = revision.parents.first().and_then(|parent_id| {
+            match store.load_object(parent_id).ok()? {
+                Object::Revision(parent) => parent.tree,
+                _ => None,
+            }
+        });
+        for change in diff_trees(store, parent_tree.as_ref(), revision.tree.as_ref(), "")? {
+            if !paths.iter().any(|path| path == &change.path) {
+                paths.push(change.path);
+            }
+        }
+    }
+
+    Ok(paths)
+}
+
+fn simulation_failures(steps: &[SimulationStep]) -> Vec<SimulationFailure> {
+    steps
+        .iter()
+        .filter_map(|step| {
+            step.reason.as_ref().map(|reason| SimulationFailure {
+                step: step.name,
+                reason: reason.clone(),
+            })
+        })
+        .collect()
 }
 
 fn current_time_ms() -> u64 {
@@ -565,9 +1249,9 @@ fn load_default_capsule(
     store: &ClawStore,
     revision_id: &ObjectId,
     revision: &Revision,
-) -> anyhow::Result<(ObjectId, Capsule)> {
+) -> anyhow::Result<Option<(ObjectId, Capsule)>> {
     if let Some(capsule_id) = revision.capsule_id {
-        return load_capsule_id(store, capsule_id, &capsule_id.to_string());
+        return load_capsule_id(store, capsule_id, &capsule_id.to_string()).map(Some);
     }
 
     for ref_name in [
@@ -575,14 +1259,29 @@ fn load_default_capsule(
         format!("capsules/{}", revision_id.to_hex()),
     ] {
         if let Some(capsule_id) = store.get_ref(&ref_name)? {
-            return load_capsule_id(store, capsule_id, &ref_name);
+            return load_capsule_id(store, capsule_id, &ref_name).map(Some);
         }
     }
 
-    anyhow::bail!(
-        "revision {} has no capsule; pass --capsule",
-        revision_id.to_hex()
-    )
+    Ok(None)
+}
+
+fn synthetic_missing_capsule(revision_id: ObjectId) -> Capsule {
+    Capsule {
+        revision_id,
+        public_fields: CapsulePublic {
+            agent_id: String::new(),
+            agent_version: None,
+            toolchain_digest: None,
+            env_fingerprint: None,
+            evidence: Vec::new(),
+        },
+        encrypted_private: None,
+        encryption: String::new(),
+        key_id: None,
+        recipients: Vec::new(),
+        signatures: Vec::new(),
+    }
 }
 
 fn load_capsule_id(
@@ -672,8 +1371,8 @@ fn derive_capsule_trust_score(capsule: &Capsule) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_policy, parse_visibility, validate_min_trust_score, PolicyArgs, PolicyBuildOptions,
-        PolicyCommand,
+        build_policy, lint_policy, parse_visibility, validate_min_trust_score, PolicyArgs,
+        PolicyBuildOptions, PolicyCommand,
     };
     use clap::Parser;
     use claw_core::types::Visibility;
@@ -751,11 +1450,56 @@ mod tests {
             PolicyCommand::Eval {
                 id, revision, json, ..
             } => {
-                assert_eq!(id, "release");
+                assert_eq!(id.as_deref(), Some("release"));
                 assert_eq!(revision, "heads/main");
                 assert!(json);
             }
             _ => panic!("expected eval command"),
+        }
+    }
+
+    #[test]
+    fn parses_eval_policy_file_json() {
+        let cli = TestCli::parse_from([
+            "claw",
+            "simulate",
+            "--policy-file",
+            "release-policy.json",
+            "--revision",
+            "heads/main",
+            "--json",
+        ]);
+
+        match cli.args.command {
+            PolicyCommand::Eval {
+                id,
+                policy_file,
+                revision,
+                json,
+                ..
+            } => {
+                assert!(id.is_none());
+                assert_eq!(
+                    policy_file.as_deref().and_then(std::path::Path::to_str),
+                    Some("release-policy.json")
+                );
+                assert_eq!(revision, "heads/main");
+                assert!(json);
+            }
+            _ => panic!("expected eval command"),
+        }
+    }
+
+    #[test]
+    fn parses_lint_json() {
+        let cli = TestCli::parse_from(["claw", "lint", "release", "--json"]);
+
+        match cli.args.command {
+            PolicyCommand::Lint { id, json } => {
+                assert_eq!(id.as_deref(), Some("release"));
+                assert!(json);
+            }
+            _ => panic!("expected lint command"),
         }
     }
 
@@ -809,5 +1553,57 @@ mod tests {
             policy.evidence_policy.max_age_ms,
             Some(24 * 60 * 60 * 1_000)
         );
+    }
+
+    #[test]
+    fn lint_flags_dangerous_policy_shapes() {
+        let policy = build_policy(PolicyBuildOptions {
+            id: "dangerous".to_string(),
+            visibility: "public".to_string(),
+            checks: vec![],
+            reviewers: vec![],
+            sensitive_paths: vec!["secrets/**".to_string()],
+            quarantine_lane: false,
+            min_trust_score: None,
+            recipients: vec!["security".to_string()],
+            revoked_recipients: vec!["SECURITY".to_string()],
+            require_fresh_evidence: true,
+            evidence_max_age_ms: None,
+            trusted_runners: vec![],
+        })
+        .unwrap();
+
+        let findings = lint_policy(&policy);
+        let codes = findings
+            .iter()
+            .map(|finding| finding.code)
+            .collect::<Vec<_>>();
+        assert!(codes.contains(&"FRESHNESS_WITHOUT_REQUIRED_CHECKS"));
+        assert!(codes.contains(&"FRESHNESS_WITHOUT_TRUSTED_RUNNER"));
+        assert!(codes.contains(&"RECIPIENT_AUTH_REVOKE_OVERLAP"));
+    }
+
+    #[test]
+    fn lint_flags_noop_policy() {
+        let policy = build_policy(PolicyBuildOptions {
+            id: "noop".to_string(),
+            visibility: "public".to_string(),
+            checks: vec![],
+            reviewers: vec![],
+            sensitive_paths: vec![],
+            quarantine_lane: false,
+            min_trust_score: None,
+            recipients: vec![],
+            revoked_recipients: vec![],
+            require_fresh_evidence: false,
+            evidence_max_age_ms: None,
+            trusted_runners: vec![],
+        })
+        .unwrap();
+
+        let findings = lint_policy(&policy);
+        assert!(findings
+            .iter()
+            .any(|finding| finding.code == "POLICY_NO_ENFORCEMENT"));
     }
 }

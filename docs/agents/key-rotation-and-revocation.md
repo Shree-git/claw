@@ -10,7 +10,10 @@ claw agent register --name build-agent-01 --version "2026-05-11"
 claw agent register --name hosted-agent --public-key <hex-ed25519-public-key>
 claw agent rotate --name build-agent-01 --version "2026-05-12"
 claw agent rotate --name hosted-agent --public-key <replacement-public-key>
+claw agent quarantine --name build-agent-01 --reason "runner drift"
+claw agent unquarantine --name build-agent-01
 claw agent revoke --name build-agent-01 --reason "runner compromise"
+claw agent audit
 claw agent list
 claw agent status build-agent-01
 ```
@@ -27,6 +30,13 @@ Use `claw agent keygen --name <agent>` to provision a local key without changing
 repository trust. Use `claw agent register --public-key <hex>` or
 `claw agent rotate --public-key <hex>` for agents whose private keys are managed
 outside the current machine.
+
+Use `claw agent audit` for fleet checks. It scans every `agents/*` ref and
+reports active, quarantined, revoked, legacy, malformed, missing local key,
+mismatched local key, and private-key-material findings. JSON output includes
+fleet triage counts and per-agent `risk_level`, `action_required`, and
+`recommended_action` fields so operational scripts can prioritize many agent
+identities.
 
 ## Rotate
 
@@ -50,6 +60,24 @@ Use this operational procedure:
 
 Prefer stable agent IDs in policy where possible. Policies that pin raw public
 key IDs need an update when the public key changes.
+
+## Quarantine
+
+Use `claw agent quarantine` when a runner looks suspicious but you are not ready
+to permanently revoke the identity:
+
+1. Stop jobs that sign as the affected agent.
+2. Preview with `claw agent quarantine --name <name> --reason <reason>
+   --dry-run`.
+3. Run `claw agent quarantine --name <name> --reason <reason>`.
+4. Run `claw agent audit` and preserve the output with the incident record.
+5. Re-run affected evidence from a trusted runner before integrating changes
+   signed during the investigation window.
+
+Quarantined agents cannot sign through `claw ship` and are omitted from
+integration provenance trust checks. Use `claw agent unquarantine --name <name>`
+to restore the same key after investigation, or `claw agent rotate --name
+<name>` to replace the key and clear quarantine.
 
 ## Revoke
 

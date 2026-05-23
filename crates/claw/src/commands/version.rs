@@ -12,6 +12,8 @@ pub struct VersionArgs {
 
 #[derive(Serialize)]
 struct VersionInfo {
+    schema_version: u8,
+    action: &'static str,
     name: &'static str,
     version: &'static str,
     package: &'static str,
@@ -33,6 +35,8 @@ struct BuildInfo {
 
 pub fn run(args: VersionArgs) -> anyhow::Result<()> {
     let info = VersionInfo {
+        schema_version: 1,
+        action: "version",
         name: "claw",
         version: env!("CARGO_PKG_VERSION"),
         package: env!("CARGO_PKG_NAME"),

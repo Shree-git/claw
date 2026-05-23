@@ -1,5 +1,6 @@
 use claw_core::id::ObjectId;
 
+use crate::fs_util;
 use crate::layout::RepoLayout;
 use crate::refs;
 use crate::StoreError;
@@ -34,8 +35,7 @@ pub fn write_head(layout: &RepoLayout, state: &HeadState) -> Result<(), StoreErr
         HeadState::Symbolic { ref_name } => format!("ref: {}\n", ref_name),
         HeadState::Detached { target } => format!("{}\n", target.to_hex()),
     };
-    std::fs::write(layout.head_file(), content)?;
-    Ok(())
+    fs_util::write_atomic(&layout.head_file(), content.as_bytes())
 }
 
 pub fn resolve_head(layout: &RepoLayout) -> Result<Option<ObjectId>, StoreError> {

@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -61,6 +62,9 @@ pub struct DaemonArgs {
     /// Require bearer auth token for all gRPC requests
     #[arg(long)]
     auth_token: Option<String>,
+    /// Read bearer auth token from stdin instead of a command argument
+    #[arg(long)]
+    auth_token_stdin: bool,
     /// Read bearer auth token from a saved auth profile
     #[arg(long)]
     auth_profile: Option<String>,
@@ -312,8 +316,23 @@ impl DaemonMetrics {
 }
 
 fn resolve_daemon_auth_token(args: &DaemonArgs) -> anyhow::Result<Option<String>> {
-    if args.auth_token.is_some() && args.auth_profile.is_some() {
-        anyhow::bail!("use either --auth-token or --auth-profile, not both");
+    let mut stdin = std::io::stdin();
+    resolve_daemon_auth_token_from_reader(args, &mut stdin)
+}
+
+fn resolve_daemon_auth_token_from_reader<R: Read>(
+    args: &DaemonArgs,
+    reader: &mut R,
+) -> anyhow::Result<Option<String>> {
+    if args.stdio && args.auth_token_stdin {
+        anyhow::bail!("--auth-token-stdin cannot be used with --stdio");
+    }
+
+    let configured_sources = usize::from(args.auth_token.is_some())
+        + usize::from(args.auth_profile.is_some())
+        + usize::from(args.auth_token_stdin);
+    if configured_sources > 1 {
+        anyhow::bail!("use only one of --auth-token, --auth-token-stdin, or --auth-profile");
     }
 
     if let Some(token) = &args.auth_token {
@@ -324,8 +343,18 @@ fn resolve_daemon_auth_token(args: &DaemonArgs) -> anyhow::Result<Option<String>
         return Ok(Some(trimmed.to_string()));
     }
 
+    if args.auth_token_stdin {
+        let mut token = String::new();
+        reader.read_to_string(&mut token)?;
+        let token = token.trim_end_matches(['\r', '\n']).to_string();
+        if token.is_empty() {
+            anyhow::bail!("--auth-token-stdin cannot be empty");
+        }
+        return Ok(Some(token));
+    }
+
     if let Some(profile) = &args.auth_profile {
-        let token = auth_store::resolve_access_token(Some(profile)).ok_or_else(|| {
+        let token = auth_store::try_resolve_access_token(Some(profile))?.ok_or_else(|| {
             anyhow::anyhow!(
                 "no token for profile '{}'; run `claw auth login --profile {}`",
                 profile,
@@ -874,7 +903,7 @@ pub async fn run(args: DaemonArgs, runtime: &RuntimeOptions) -> anyhow::Result<(
 
     if auth_token.is_none() {
         let profile = config::default_profile(&cfg);
-        auth_token = auth_store::resolve_access_token(Some(profile));
+        auth_token = auth_store::try_resolve_access_token(Some(profile))?;
     }
 
     let tls_cert = args
@@ -897,7 +926,7 @@ pub async fn run(args: DaemonArgs, runtime: &RuntimeOptions) -> anyhow::Result<(
     if non_local_bind && enforce_prod_profile {
         if cfg.auth.require_auth_for_daemon && auth_token.is_none() {
             anyhow::bail!(
-                "non-local bind requires authentication; use --auth-token, --auth-profile, or set a token for default profile"
+                "non-local bind requires authentication; use --auth-profile, --auth-token-stdin, --auth-token, or set a token for default profile"
             );
         }
         if cfg.tls.require_for_non_localhost && tls_identity.is_none() {
@@ -1462,6 +1491,7 @@ mod tests {
             health_listen: "[::1]:50052".to_string(),
             stdio: false,
             auth_token: Some("correct-token".to_string()),
+            auth_token_stdin: false,
             auth_profile: None,
             auth_principal: "agent-a".to_string(),
             auth_role: "reader".to_string(),
@@ -1493,5 +1523,65 @@ mod tests {
                 resource: Some("heads/main".to_string()),
             })
             .is_allowed());
+    }
+
+    #[test]
+    fn daemon_auth_token_can_be_read_from_stdin() {
+        let args = DaemonArgs {
+            listen: "[::1]:50051".to_string(),
+            health_listen: "[::1]:50052".to_string(),
+            allow_public_health: false,
+            stdio: false,
+            auth_token: None,
+            auth_token_stdin: true,
+            auth_profile: None,
+            auth_principal: "agent-a".to_string(),
+            auth_role: "reader".to_string(),
+            auth_scopes: vec![],
+            require_replay_nonce: false,
+            rate_limit_per_minute: None,
+            max_push_chunk_bytes: None,
+            max_push_request_bytes: None,
+            tls_cert: None,
+            tls_key: None,
+            client_ca_cert: None,
+            audit_log: None,
+        };
+
+        let mut input = std::io::Cursor::new("correct-token\n");
+        let token =
+            resolve_daemon_auth_token_from_reader(&args, &mut input).expect("stdin auth token");
+        assert_eq!(token.as_deref(), Some("correct-token"));
+    }
+
+    #[test]
+    fn daemon_auth_token_rejects_multiple_secret_sources() {
+        let args = DaemonArgs {
+            listen: "[::1]:50051".to_string(),
+            health_listen: "[::1]:50052".to_string(),
+            allow_public_health: false,
+            stdio: false,
+            auth_token: Some("arg-token".to_string()),
+            auth_token_stdin: true,
+            auth_profile: None,
+            auth_principal: "agent-a".to_string(),
+            auth_role: "reader".to_string(),
+            auth_scopes: vec![],
+            require_replay_nonce: false,
+            rate_limit_per_minute: None,
+            max_push_chunk_bytes: None,
+            max_push_request_bytes: None,
+            tls_cert: None,
+            tls_key: None,
+            client_ca_cert: None,
+            audit_log: None,
+        };
+
+        let mut input = std::io::Cursor::new("stdin-token\n");
+        let err = resolve_daemon_auth_token_from_reader(&args, &mut input)
+            .expect_err("ambiguous token sources should fail");
+        assert!(err
+            .to_string()
+            .contains("--auth-token, --auth-token-stdin, or --auth-profile"));
     }
 }

@@ -44,7 +44,7 @@ claw policy create \
 Store a token in a profile used by daemon startup:
 
 ```bash
-claw auth token set "<strong-random-token>" --profile default
+printf '%s\n' "$CLAW_TOKEN" | claw auth token set --stdin --profile default
 ```
 
 ## 5) Preflight checks

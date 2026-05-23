@@ -3,18 +3,26 @@ use std::path::{Path, PathBuf};
 
 use claw_core::id::ObjectId;
 use claw_core::object::Object;
+use claw_policy::{evaluator::evaluate_policy, PolicyContext};
 use claw_store::{ClawStore, HeadState};
 use claw_sync::client::{RetryPolicy, SyncClient};
 use claw_sync::compat::{compatibility_report, CompatibilityLevel};
 use claw_sync::negotiation::ordered_reachable_objects;
-use claw_sync::proto::sync::HelloResponse;
-use claw_sync::protocol::{negotiated_protocol_version, SYNC_PROTOCOL_VERSION};
-use claw_sync::transport::{GrpcTlsConfig, RemoteTransportConfig};
+use claw_sync::proto::sync::{HelloResponse, PartialCloneFilter};
+use claw_sync::protocol::{
+    negotiated_protocol_version, server_capabilities, CAP_POLICY_AWARE_PUSH, SYNC_PROTOCOL_VERSION,
+};
+use claw_sync::transport::{
+    GrpcTlsConfig, RefUpdateContext, RefUpdatePolicyCheck, RemoteTransportConfig,
+};
 
 use crate::auth_store;
 use crate::config::{self, find_repo_root};
 use crate::worktree;
 
+use super::object_refs::{
+    current_time_ms, derive_capsule_trust_score, load_default_capsule, load_policy,
+};
 use super::{remote, RuntimeOptions};
 
 const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -56,7 +64,7 @@ fn require_access_token(
 ) -> anyhow::Result<String> {
     let candidates = resolve_token_profiles(token_profile, runtime_profile, repo_default_profile);
     for profile_name in &candidates {
-        if let Some(token) = auth_store::resolve_access_token(Some(profile_name)) {
+        if let Some(token) = auth_store::try_resolve_access_token(Some(profile_name))? {
             return Ok(token);
         }
     }
@@ -102,12 +110,18 @@ enum SyncCommand {
         /// Ref to push
         #[arg(short = 'b', long, default_value = "heads/main")]
         ref_name: String,
+        /// Output a machine-readable JSON receipt
+        #[arg(long)]
+        json: bool,
         /// Force non-fast-forward push
         #[arg(long)]
         force: bool,
         /// Preview objects and ref update without uploading or mutating remote refs
         #[arg(long)]
         dry_run: bool,
+        /// Evaluate this repository policy before uploading or updating the remote ref. Repeatable.
+        #[arg(long = "policy")]
+        policies: Vec<String>,
     },
     /// Pull objects from remote
     Pull {
@@ -120,6 +134,11 @@ enum SyncCommand {
         /// Force non-fast-forward update
         #[arg(long)]
         force: bool,
+        /// Output a machine-readable JSON receipt
+        #[arg(long)]
+        json: bool,
+        #[command(flatten)]
+        filter: FetchFilterArgs,
     },
     /// Clone a remote repository
     Clone {
@@ -137,7 +156,40 @@ enum SyncCommand {
         /// Local path
         #[arg(default_value = ".")]
         path: String,
+        /// Output a machine-readable JSON receipt
+        #[arg(long)]
+        json: bool,
+        #[command(flatten)]
+        filter: FetchFilterArgs,
     },
+}
+
+#[derive(Args, Clone, Debug, Default)]
+struct FetchFilterArgs {
+    /// Include objects associated with this intent ID. Repeatable.
+    #[arg(long = "intent")]
+    intent_ids: Vec<String>,
+    /// Include patches under this repository path prefix. Repeatable.
+    #[arg(long = "path-prefix")]
+    path_prefixes: Vec<String>,
+    /// Include patches using this codec ID. Repeatable.
+    #[arg(long = "codec")]
+    codec_ids: Vec<String>,
+    /// Include revisions created at or after this Unix epoch millisecond.
+    #[arg(long = "time-start-ms")]
+    time_start_ms: Option<u64>,
+    /// Include revisions created at or before this Unix epoch millisecond.
+    #[arg(long = "time-end-ms")]
+    time_end_ms: Option<u64>,
+    /// Filter capsules by visibility: public|private|restricted.
+    #[arg(long = "visibility")]
+    capsule_visibility: Option<String>,
+    /// Limit object traversal depth from requested refs.
+    #[arg(long = "depth")]
+    max_depth: Option<u32>,
+    /// Stop streaming after this approximate byte budget.
+    #[arg(long = "bytes", alias = "byte-budget")]
+    max_bytes: Option<u64>,
 }
 
 fn resolve_command(args: SyncArgs) -> SyncCommand {
@@ -147,8 +199,36 @@ fn resolve_command(args: SyncArgs) -> SyncCommand {
             remote: args.remote.unwrap_or_else(|| "origin".to_string()),
             ref_name: "heads/main".to_string(),
             force: false,
+            json: false,
+            filter: FetchFilterArgs::default(),
         },
     }
+}
+
+fn build_fetch_filter(args: &FetchFilterArgs) -> Option<PartialCloneFilter> {
+    let empty = args.intent_ids.is_empty()
+        && args.path_prefixes.is_empty()
+        && args.codec_ids.is_empty()
+        && args.time_start_ms.is_none()
+        && args.time_end_ms.is_none()
+        && args.capsule_visibility.is_none()
+        && args.max_depth.is_none()
+        && args.max_bytes.is_none();
+
+    (!empty).then(|| PartialCloneFilter {
+        intent_ids: args.intent_ids.clone(),
+        path_prefixes: args.path_prefixes.clone(),
+        time_range_start: args.time_start_ms.unwrap_or_default(),
+        time_range_end: args.time_end_ms.unwrap_or_default(),
+        codec_ids: args.codec_ids.clone(),
+        capsule_visibility: args.capsule_visibility.clone().unwrap_or_default(),
+        max_bytes: args.max_bytes.unwrap_or_default(),
+        max_depth: args.max_depth.unwrap_or_default(),
+    })
+}
+
+fn object_available(store: &ClawStore, id: &ObjectId) -> bool {
+    store.load_object(id).is_ok()
 }
 
 async fn connect_from_remote(
@@ -280,17 +360,51 @@ pub async fn run(args: SyncArgs, runtime: &RuntimeOptions) -> anyhow::Result<()>
         SyncCommand::Push {
             remote,
             ref_name,
+            json,
             force,
             dry_run,
+            policies,
         } => {
             let root = find_repo_root()?;
             let store = ClawStore::open(&root)?;
             let mut client = connect_from_remote(&root, &remote, runtime, grpc_tls.clone()).await?;
-            maybe_check_compatibility(runtime, &remote, &mut client).await?;
+            let hello = client.hello().await?;
+            if runtime.compat_check {
+                check_remote_compatibility(&remote, &hello)?;
+            }
 
             let local_id = store
                 .get_ref(&ref_name)?
                 .ok_or_else(|| anyhow::anyhow!("ref not found: {ref_name}"))?;
+            let policy_results = evaluate_push_policies(&store, &ref_name, local_id, &policies)?;
+            let denied_policies = policy_results
+                .iter()
+                .filter(|result| !result.allowed)
+                .collect::<Vec<_>>();
+            if !denied_policies.is_empty() {
+                if json {
+                    print_push_policy_denial_json(
+                        dry_run,
+                        &remote,
+                        &ref_name,
+                        force,
+                        local_id,
+                        &policy_results,
+                    )?;
+                }
+                let joined = denied_policies
+                    .iter()
+                    .map(|result| {
+                        format!(
+                            "{} ({})",
+                            result.id,
+                            result.reason.as_deref().unwrap_or("denied")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                anyhow::bail!("policy denied sync push for {ref_name}: {joined}");
+            }
 
             let push_ids: Vec<ObjectId> = ordered_reachable_objects(&store, &[local_id]);
 
@@ -302,30 +416,75 @@ pub async fn run(args: SyncArgs, runtime: &RuntimeOptions) -> anyhow::Result<()>
 
             let updates = vec![(ref_name.clone(), remote_old, local_id)];
             if dry_run {
-                println!(
-                    "Dry run: would push {} object(s) to {}.",
-                    push_ids.len(),
-                    remote
-                );
-                match remote_old {
-                    Some(old) => println!("  Ref update: {ref_name} {old} -> {local_id}"),
-                    None => println!("  Ref create: {ref_name} -> {local_id}"),
+                if json {
+                    print_push_json(PushJson {
+                        dry_run,
+                        remote: &remote,
+                        ref_name: &ref_name,
+                        force,
+                        local_id,
+                        object_count: push_ids.len(),
+                        remote_old,
+                        upload_message: None,
+                        ref_update_success: None,
+                        ref_update_message: None,
+                        policy_results: &policy_results,
+                        remote_capabilities: &hello.capabilities,
+                    })?;
+                } else {
+                    println!(
+                        "Dry run: would push {} object(s) to {}.",
+                        push_ids.len(),
+                        remote
+                    );
+                    match remote_old {
+                        Some(old) => println!("  Ref update: {ref_name} {old} -> {local_id}"),
+                        None => println!("  Ref create: {ref_name} -> {local_id}"),
+                    }
+                    if force {
+                        println!("  Force: true");
+                    }
+                    print_policy_gate_human(&policy_results);
+                    println!("  Object upload skipped.");
+                    println!("  Remote ref update skipped.");
                 }
-                if force {
-                    println!("  Force: true");
-                }
-                println!("  Object upload skipped.");
-                println!("  Remote ref update skipped.");
                 return Ok(());
             }
 
             let resp = client.push_objects(&store, &push_ids).await?;
-            println!("Push: {}", resp.message);
+            if !json {
+                println!("Push: {}", resp.message);
+            }
 
-            let ref_resp = client.update_refs(&updates, force).await?;
+            let ref_update_context = build_ref_update_context(&policy_results, &hello);
+            let ref_resp = if ref_update_context.has_policy_checks() {
+                client
+                    .update_refs_with_context(&updates, force, ref_update_context)
+                    .await?
+            } else {
+                client.update_refs(&updates, force).await?
+            };
 
             if ref_resp.success {
-                println!("Pushed {} to {}", ref_name, remote);
+                if json {
+                    print_push_json(PushJson {
+                        dry_run,
+                        remote: &remote,
+                        ref_name: &ref_name,
+                        force,
+                        local_id,
+                        object_count: push_ids.len(),
+                        remote_old,
+                        upload_message: Some(resp.message.as_str()),
+                        ref_update_success: Some(ref_resp.success),
+                        ref_update_message: Some(ref_resp.message.as_str()),
+                        policy_results: &policy_results,
+                        remote_capabilities: &hello.capabilities,
+                    })?;
+                } else {
+                    print_policy_gate_human(&policy_results);
+                    println!("Pushed {} to {}", ref_name, remote);
+                }
             } else {
                 anyhow::bail!("ref update failed: {}", ref_resp.message);
             }
@@ -334,6 +493,8 @@ pub async fn run(args: SyncArgs, runtime: &RuntimeOptions) -> anyhow::Result<()>
             remote,
             ref_name,
             force,
+            json,
+            filter,
         } => {
             let root = find_repo_root()?;
             let store = ClawStore::open(&root)?;
@@ -349,7 +510,25 @@ pub async fn run(args: SyncArgs, runtime: &RuntimeOptions) -> anyhow::Result<()>
             let remote_id = match remote_target {
                 Some(id) => id,
                 None => {
-                    println!("Remote ref {ref_name} not found");
+                    if json {
+                        print_pull_json(PullJson {
+                            remote: &remote,
+                            ref_name: &ref_name,
+                            force,
+                            remote_ref_found: false,
+                            remote_id: None,
+                            fetched_count: 0,
+                            target_available: false,
+                            ref_update_skipped: true,
+                            ref_update_old: None,
+                            ref_update_success: Some(false),
+                            ref_update_message: Some("remote ref not found"),
+                            worktree_updated: false,
+                            filter: &filter,
+                        })?;
+                    } else {
+                        println!("Remote ref {ref_name} not found");
+                    }
                     return Ok(());
                 }
             };
@@ -357,8 +536,41 @@ pub async fn run(args: SyncArgs, runtime: &RuntimeOptions) -> anyhow::Result<()>
             let local_id = store.get_ref(&ref_name)?;
             let have: Vec<ObjectId> = local_id.into_iter().collect();
 
-            let fetched = client.fetch_objects(&store, &[remote_id], &have).await?;
-            println!("Fetched {} objects", fetched.len());
+            let fetched = client
+                .fetch_objects_filtered(&store, &[remote_id], &have, build_fetch_filter(&filter))
+                .await?;
+            if !json {
+                println!("Fetched {} objects", fetched.len());
+            }
+
+            if !object_available(&store, &remote_id) {
+                if json {
+                    print_pull_json(PullJson {
+                        remote: &remote,
+                        ref_name: &ref_name,
+                        force,
+                        remote_ref_found: true,
+                        remote_id: Some(remote_id),
+                        fetched_count: fetched.len(),
+                        target_available: false,
+                        ref_update_skipped: true,
+                        ref_update_old: local_id,
+                        ref_update_success: Some(false),
+                        ref_update_message: Some("fetch filters did not include target revision"),
+                        worktree_updated: false,
+                        filter: &filter,
+                    })?;
+                } else {
+                    println!(
+                        "Ref update skipped: fetch filters did not include target {} for {}.",
+                        remote_id, ref_name
+                    );
+                    println!(
+                        "Run without filters, widen the filter, or inspect the partial object set before updating refs."
+                    );
+                }
+                return Ok(());
+            }
 
             if let Some(local) = store.get_ref(&ref_name)? {
                 let is_ff = claw_sync::ancestry::is_ancestor(&store, &local, &remote_id);
@@ -372,8 +584,11 @@ pub async fn run(args: SyncArgs, runtime: &RuntimeOptions) -> anyhow::Result<()>
 
             let old = store.get_ref(&ref_name)?;
             store.update_ref_cas(&ref_name, old.as_ref(), &remote_id, "sync", "pull")?;
-            println!("Updated {} to {}", ref_name, remote_id);
+            if !json {
+                println!("Updated {} to {}", ref_name, remote_id);
+            }
 
+            let mut worktree_updated = false;
             let head_state = store.read_head()?;
             if let HeadState::Symbolic {
                 ref_name: ref head_ref,
@@ -384,10 +599,30 @@ pub async fn run(args: SyncArgs, runtime: &RuntimeOptions) -> anyhow::Result<()>
                     if let Object::Revision(ref rev) = rev_obj {
                         if let Some(ref tree_id) = rev.tree {
                             worktree::materialize_tree(&store, tree_id, &root)?;
-                            println!("Working tree updated.");
+                            worktree_updated = true;
+                            if !json {
+                                println!("Working tree updated.");
+                            }
                         }
                     }
                 }
+            }
+            if json {
+                print_pull_json(PullJson {
+                    remote: &remote,
+                    ref_name: &ref_name,
+                    force,
+                    remote_ref_found: true,
+                    remote_id: Some(remote_id),
+                    fetched_count: fetched.len(),
+                    target_available: true,
+                    ref_update_skipped: false,
+                    ref_update_old: old,
+                    ref_update_success: Some(true),
+                    ref_update_message: Some("updated"),
+                    worktree_updated,
+                    filter: &filter,
+                })?;
             }
         }
         SyncCommand::Clone {
@@ -396,6 +631,8 @@ pub async fn run(args: SyncArgs, runtime: &RuntimeOptions) -> anyhow::Result<()>
             repo,
             token_profile,
             path,
+            json,
+            filter,
         } => {
             let root = std::path::Path::new(&path);
             let store = ClawStore::init(root)?;
@@ -461,10 +698,19 @@ pub async fn run(args: SyncArgs, runtime: &RuntimeOptions) -> anyhow::Result<()>
             let remote_refs = client.advertise_refs("").await?;
 
             let want: Vec<_> = remote_refs.iter().map(|(_, id)| *id).collect();
-            let fetched = client.fetch_objects(&store, &want, &[]).await?;
+            let fetched = client
+                .fetch_objects_filtered(&store, &want, &[], build_fetch_filter(&filter))
+                .await?;
 
+            let mut installed_refs = 0usize;
+            let mut skipped_refs = Vec::new();
             for (name, id) in &remote_refs {
-                store.set_ref(name, id)?;
+                if object_available(&store, id) {
+                    store.set_ref(name, id)?;
+                    installed_refs += 1;
+                } else {
+                    skipped_refs.push((name.clone(), *id));
+                }
             }
 
             store.write_head(&HeadState::Symbolic {
@@ -473,17 +719,29 @@ pub async fn run(args: SyncArgs, runtime: &RuntimeOptions) -> anyhow::Result<()>
 
             let main_id = store.get_ref("heads/main")?;
             let checkout_id = main_id.or_else(|| remote_refs.first().map(|(_, id)| *id));
+            let checkout_target = checkout_id.map(|id| id.to_string());
+            let mut worktree_updated = false;
+            let mut checkout_skipped = false;
             if let Some(rev_id) = checkout_id {
-                let rev_obj = store.load_object(&rev_id)?;
-                if let Object::Revision(ref rev) = rev_obj {
-                    if let Some(ref tree_id) = rev.tree {
-                        worktree::materialize_tree(&store, tree_id, root)?;
+                if let Ok(rev_obj) = store.load_object(&rev_id) {
+                    if let Object::Revision(ref rev) = rev_obj {
+                        if let Some(ref tree_id) = rev.tree {
+                            worktree::materialize_tree(&store, tree_id, root)?;
+                            worktree_updated = true;
+                        }
+                    }
+                } else if !skipped_refs.is_empty() {
+                    checkout_skipped = true;
+                    if !json {
+                        println!(
+                            "Working tree checkout skipped: fetch filters did not include a fetched revision ref."
+                        );
                     }
                 }
             }
 
             let config_path = root.join(".claw").join("remotes.toml");
-            let mut remotes = remote::load_remotes(&config_path);
+            let mut remotes = remote::load_remotes(&config_path)?;
             let origin_entry = match kind.as_str() {
                 "grpc" => remote::RemoteEntry {
                     kind: Some("grpc".to_string()),
@@ -501,18 +759,384 @@ pub async fn run(args: SyncArgs, runtime: &RuntimeOptions) -> anyhow::Result<()>
                 _ => remote::RemoteEntry::default(),
             };
             remotes.remotes.insert("origin".to_string(), origin_entry);
-            let content = toml::to_string_pretty(&remotes)?;
-            std::fs::write(&config_path, content)?;
+            remote::save_remotes(&config_path, &remotes)?;
 
-            println!(
-                "Cloned {} ({} objects, {} refs)",
-                remote,
-                fetched.len(),
-                remote_refs.len()
-            );
+            if json {
+                print_clone_json(CloneJson {
+                    remote: &remote,
+                    kind: &kind,
+                    repo: repo.as_deref(),
+                    path: &path,
+                    fetched_count: fetched.len(),
+                    remote_ref_count: remote_refs.len(),
+                    installed_ref_count: installed_refs,
+                    skipped_refs: &skipped_refs,
+                    filter: &filter,
+                    head: "heads/main",
+                    checkout_target: checkout_target.as_deref(),
+                    worktree_updated,
+                    checkout_skipped,
+                    remote_name: "origin",
+                    remote_config_path: config_path.display().to_string(),
+                })?;
+            } else {
+                println!(
+                    "Cloned {} ({} objects, {} refs)",
+                    remote,
+                    fetched.len(),
+                    installed_refs
+                );
+                if !skipped_refs.is_empty() {
+                    println!(
+                        "Filtered clone skipped {} ref(s) whose targets were not fetched.",
+                        skipped_refs.len()
+                    );
+                }
+            }
         }
     }
     Ok(())
+}
+
+struct PushJson<'a> {
+    dry_run: bool,
+    remote: &'a str,
+    ref_name: &'a str,
+    force: bool,
+    local_id: ObjectId,
+    object_count: usize,
+    remote_old: Option<ObjectId>,
+    upload_message: Option<&'a str>,
+    ref_update_success: Option<bool>,
+    ref_update_message: Option<&'a str>,
+    policy_results: &'a [PushPolicyResult],
+    remote_capabilities: &'a [String],
+}
+
+struct PullJson<'a> {
+    remote: &'a str,
+    ref_name: &'a str,
+    force: bool,
+    remote_ref_found: bool,
+    remote_id: Option<ObjectId>,
+    fetched_count: usize,
+    target_available: bool,
+    ref_update_skipped: bool,
+    ref_update_old: Option<ObjectId>,
+    ref_update_success: Option<bool>,
+    ref_update_message: Option<&'a str>,
+    worktree_updated: bool,
+    filter: &'a FetchFilterArgs,
+}
+
+struct CloneJson<'a> {
+    remote: &'a str,
+    kind: &'a str,
+    repo: Option<&'a str>,
+    path: &'a str,
+    fetched_count: usize,
+    remote_ref_count: usize,
+    installed_ref_count: usize,
+    skipped_refs: &'a [(String, ObjectId)],
+    filter: &'a FetchFilterArgs,
+    head: &'a str,
+    checkout_target: Option<&'a str>,
+    worktree_updated: bool,
+    checkout_skipped: bool,
+    remote_name: &'a str,
+    remote_config_path: String,
+}
+
+struct PushPolicyResult {
+    id: String,
+    ref_name: String,
+    object: String,
+    allowed: bool,
+    reason: Option<String>,
+}
+
+fn print_clone_json(receipt: CloneJson<'_>) -> anyhow::Result<()> {
+    let skipped_refs: Vec<_> = receipt
+        .skipped_refs
+        .iter()
+        .map(|(name, id)| {
+            serde_json::json!({
+                "name": name,
+                "target": id.to_string(),
+            })
+        })
+        .collect();
+    let value = serde_json::json!({
+        "schema_version": 1,
+        "action": "sync.clone",
+        "remote": receipt.remote,
+        "kind": receipt.kind,
+        "repo": receipt.repo,
+        "path": receipt.path,
+        "fetched_count": receipt.fetched_count,
+        "remote_ref_count": receipt.remote_ref_count,
+        "installed_ref_count": receipt.installed_ref_count,
+        "skipped_refs": skipped_refs,
+        "filter": fetch_filter_json(receipt.filter),
+        "head": receipt.head,
+        "checkout": {
+            "target": receipt.checkout_target,
+            "updated": receipt.worktree_updated,
+            "skipped": receipt.checkout_skipped,
+        },
+        "remote_config": {
+            "name": receipt.remote_name,
+            "path": receipt.remote_config_path,
+        },
+    });
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn print_pull_json(receipt: PullJson<'_>) -> anyhow::Result<()> {
+    let value = serde_json::json!({
+        "schema_version": 1,
+        "action": "sync.pull",
+        "remote": receipt.remote,
+        "ref_name": receipt.ref_name,
+        "force": receipt.force,
+        "remote_ref_found": receipt.remote_ref_found,
+        "remote_revision": receipt.remote_id.map(|id| id.to_string()),
+        "fetched_count": receipt.fetched_count,
+        "target_available": receipt.target_available,
+        "filter": fetch_filter_json(receipt.filter),
+        "ref_update": {
+            "skipped": receipt.ref_update_skipped,
+            "old": receipt.ref_update_old.map(|id| id.to_string()),
+            "new": receipt.remote_id.map(|id| id.to_string()),
+            "success": receipt.ref_update_success,
+            "message": receipt.ref_update_message,
+        },
+        "worktree": {
+            "updated": receipt.worktree_updated,
+        },
+    });
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn fetch_filter_json(filter: &FetchFilterArgs) -> serde_json::Value {
+    serde_json::json!({
+        "active": build_fetch_filter(filter).is_some(),
+        "dimensions": fetch_filter_dimensions(filter),
+        "intent_ids": &filter.intent_ids,
+        "path_prefixes": &filter.path_prefixes,
+        "codec_ids": &filter.codec_ids,
+        "time_start_ms": filter.time_start_ms,
+        "time_end_ms": filter.time_end_ms,
+        "capsule_visibility": &filter.capsule_visibility,
+        "max_depth": filter.max_depth,
+        "max_bytes": filter.max_bytes,
+        "byte_budget": filter.max_bytes,
+    })
+}
+
+fn fetch_filter_dimensions(filter: &FetchFilterArgs) -> Vec<&'static str> {
+    let mut dimensions = Vec::new();
+    if !filter.intent_ids.is_empty() {
+        dimensions.push("intent");
+    }
+    if !filter.path_prefixes.is_empty() {
+        dimensions.push("path");
+    }
+    if filter.time_start_ms.is_some() || filter.time_end_ms.is_some() {
+        dimensions.push("time");
+    }
+    if !filter.codec_ids.is_empty() {
+        dimensions.push("codec");
+    }
+    if filter.capsule_visibility.is_some() {
+        dimensions.push("visibility");
+    }
+    if filter.max_depth.is_some() {
+        dimensions.push("depth");
+    }
+    if filter.max_bytes.is_some() {
+        dimensions.push("byte_budget");
+    }
+    dimensions
+}
+
+fn print_push_json(receipt: PushJson<'_>) -> anyhow::Result<()> {
+    let ref_update_kind = if receipt.remote_old.is_some() {
+        "update"
+    } else {
+        "create"
+    };
+    let value = serde_json::json!({
+        "schema_version": 1,
+        "action": "sync.push",
+        "dry_run": receipt.dry_run,
+        "remote": receipt.remote,
+        "ref_name": receipt.ref_name,
+        "force": receipt.force,
+        "local_revision": receipt.local_id.to_string(),
+        "object_count": receipt.object_count,
+        "upload": {
+            "skipped": receipt.dry_run,
+            "object_count": receipt.object_count,
+            "message": receipt.upload_message,
+        },
+        "ref_update": {
+            "skipped": receipt.dry_run,
+            "kind": ref_update_kind,
+            "old": receipt.remote_old.map(|id| id.to_string()),
+            "new": receipt.local_id.to_string(),
+            "success": receipt.ref_update_success,
+            "message": receipt.ref_update_message,
+        },
+        "policies": receipt.policy_results.iter().map(push_policy_json).collect::<Vec<_>>(),
+        "remote_protocol": {
+            "version": SYNC_PROTOCOL_VERSION,
+            "capabilities": receipt.remote_capabilities,
+        },
+    });
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn build_ref_update_context(
+    policy_results: &[PushPolicyResult],
+    hello: &HelloResponse,
+) -> RefUpdateContext {
+    let mut requested_capabilities = server_capabilities();
+    if !requested_capabilities
+        .iter()
+        .any(|capability| capability == CAP_POLICY_AWARE_PUSH)
+    {
+        requested_capabilities.push(CAP_POLICY_AWARE_PUSH.to_string());
+    }
+
+    RefUpdateContext {
+        policies: policy_results
+            .iter()
+            .map(|result| RefUpdatePolicyCheck {
+                id: result.id.clone(),
+                ref_name: result.ref_name.clone(),
+                object: result.object.clone(),
+                allowed: result.allowed,
+                reason: result.reason.clone(),
+            })
+            .collect(),
+        requested_capabilities,
+        negotiated_capabilities: hello.capabilities.clone(),
+    }
+}
+
+fn print_push_policy_denial_json(
+    dry_run: bool,
+    remote: &str,
+    ref_name: &str,
+    force: bool,
+    local_id: ObjectId,
+    policy_results: &[PushPolicyResult],
+) -> anyhow::Result<()> {
+    let value = serde_json::json!({
+        "schema_version": 1,
+        "action": "sync.push",
+        "dry_run": dry_run,
+        "remote": remote,
+        "ref_name": ref_name,
+        "force": force,
+        "local_revision": local_id.to_string(),
+        "policy_allowed": false,
+        "policies": policy_results.iter().map(push_policy_json).collect::<Vec<_>>(),
+        "upload": {
+            "skipped": true,
+            "object_count": 0,
+            "message": "policy denied before upload",
+        },
+        "ref_update": {
+            "skipped": true,
+            "kind": "policy-denied",
+            "old": null,
+            "new": local_id.to_string(),
+            "success": false,
+            "message": "policy denied before ref update",
+        },
+    });
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn push_policy_json(result: &PushPolicyResult) -> serde_json::Value {
+    serde_json::json!({
+        "id": result.id,
+        "ref": result.ref_name,
+        "object": result.object,
+        "allowed": result.allowed,
+        "reason": result.reason,
+    })
+}
+
+fn print_policy_gate_human(results: &[PushPolicyResult]) {
+    for result in results {
+        if result.allowed {
+            println!("  Policy {}: allowed", result.id);
+        } else {
+            println!(
+                "  Policy {}: denied ({})",
+                result.id,
+                result.reason.as_deref().unwrap_or("unknown reason")
+            );
+        }
+    }
+}
+
+fn evaluate_push_policies(
+    store: &ClawStore,
+    ref_name: &str,
+    revision_id: ObjectId,
+    policies: &[String],
+) -> anyhow::Result<Vec<PushPolicyResult>> {
+    if policies.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let Object::Revision(revision) = store.load_object(&revision_id)? else {
+        anyhow::bail!("ref {ref_name} does not point to a revision");
+    };
+    let (_capsule_id, capsule) = load_default_capsule(store, &revision_id, &revision)?;
+    let touched_paths = revision
+        .patches
+        .iter()
+        .filter_map(|patch_id| match store.load_object(patch_id) {
+            Ok(Object::Patch(patch)) => Some(patch.target_path),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let context = PolicyContext {
+        revision_id: Some(revision_id),
+        signer_agent_ids: vec![capsule.public_fields.agent_id.clone()],
+        signer_key_ids: capsule
+            .signatures
+            .iter()
+            .map(|signature| signature.signer_id.clone())
+            .collect(),
+        touched_paths,
+        trust_score: derive_capsule_trust_score(&capsule),
+        now_ms: Some(current_time_ms()),
+    };
+
+    policies
+        .iter()
+        .map(|id| {
+            let (policy_ref, policy_object, policy) = load_policy(store, id)?;
+            let evaluation = evaluate_policy(&policy, &revision, &capsule, &context);
+            Ok(PushPolicyResult {
+                id: policy.policy_id,
+                ref_name: policy_ref,
+                object: policy_object.to_string(),
+                allowed: evaluation.is_ok(),
+                reason: evaluation.err().map(|err| err.to_string()),
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -520,8 +1144,8 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        build_grpc_tls_config, check_remote_compatibility, resolve_command, resolve_token_profiles,
-        SyncArgs, SyncCommand, CLI_VERSION,
+        build_fetch_filter, build_grpc_tls_config, check_remote_compatibility, fetch_filter_json,
+        resolve_command, resolve_token_profiles, SyncArgs, SyncCommand, CLI_VERSION,
     };
     use claw_sync::proto::sync::HelloResponse;
     use claw_sync::protocol::CAP_PROTOCOL_V1;
@@ -541,6 +1165,7 @@ mod tests {
                 remote,
                 ref_name,
                 force,
+                ..
             } => {
                 assert_eq!(remote, "origin");
                 assert_eq!(ref_name, "heads/main");
@@ -559,6 +1184,7 @@ mod tests {
                 remote,
                 ref_name,
                 force,
+                ..
             } => {
                 assert_eq!(remote, "upstream");
                 assert_eq!(ref_name, "heads/main");
@@ -576,15 +1202,133 @@ mod tests {
             SyncCommand::Push {
                 remote,
                 ref_name,
+                json,
                 force,
                 dry_run,
+                policies,
             } => {
                 assert_eq!(remote, "origin");
                 assert_eq!(ref_name, "heads/main");
+                assert!(!json);
                 assert!(!force);
                 assert!(dry_run);
+                assert!(policies.is_empty());
             }
             _ => panic!("expected push command"),
+        }
+    }
+
+    #[test]
+    fn parse_push_json() {
+        let cli = TestCli::parse_from([
+            "claw", "push", "--json", "--remote", "origin", "--policy", "release",
+        ]);
+
+        match resolve_command(cli.args) {
+            SyncCommand::Push { json, policies, .. } => {
+                assert!(json);
+                assert_eq!(policies, vec!["release"]);
+            }
+            _ => panic!("expected push command"),
+        }
+    }
+
+    #[test]
+    fn parse_pull_partial_clone_filter() {
+        let cli = TestCli::parse_from([
+            "claw",
+            "pull",
+            "--intent",
+            "01H00000000000000000000000",
+            "--path-prefix",
+            "src/",
+            "--codec",
+            "text/line",
+            "--visibility",
+            "public",
+            "--depth",
+            "3",
+            "--byte-budget",
+            "4096",
+            "--time-start-ms",
+            "1000",
+            "--time-end-ms",
+            "2000",
+        ]);
+
+        match resolve_command(cli.args) {
+            SyncCommand::Pull { filter, .. } => {
+                let proto = build_fetch_filter(&filter).expect("filter should be present");
+                assert_eq!(proto.intent_ids, vec!["01H00000000000000000000000"]);
+                assert_eq!(proto.path_prefixes, vec!["src/"]);
+                assert_eq!(proto.codec_ids, vec!["text/line"]);
+                assert_eq!(proto.capsule_visibility, "public");
+                assert_eq!(proto.max_depth, 3);
+                assert_eq!(proto.max_bytes, 4096);
+                assert_eq!(proto.time_range_start, 1000);
+                assert_eq!(proto.time_range_end, 2000);
+                let filter_json = fetch_filter_json(&filter);
+                assert_eq!(
+                    filter_json["dimensions"],
+                    serde_json::json!([
+                        "intent",
+                        "path",
+                        "time",
+                        "codec",
+                        "visibility",
+                        "depth",
+                        "byte_budget"
+                    ])
+                );
+                assert_eq!(filter_json["byte_budget"], 4096);
+            }
+            _ => panic!("expected pull command"),
+        }
+    }
+
+    #[test]
+    fn parse_clone_partial_clone_filter() {
+        let cli = TestCli::parse_from([
+            "claw",
+            "clone",
+            "http://127.0.0.1:50051",
+            "./partial",
+            "--intent",
+            "01H00000000000000000000000",
+            "--path-prefix",
+            "src/",
+            "--codec",
+            "json/tree",
+            "--visibility",
+            "private",
+            "--depth",
+            "2",
+            "--bytes",
+            "8192",
+            "--time-start-ms",
+            "3000",
+            "--time-end-ms",
+            "4000",
+            "--json",
+        ]);
+
+        match resolve_command(cli.args) {
+            SyncCommand::Clone {
+                filter, path, json, ..
+            } => {
+                assert_eq!(path, "./partial");
+                assert!(json);
+                let proto = build_fetch_filter(&filter).expect("filter should be present");
+                assert_eq!(proto.intent_ids, vec!["01H00000000000000000000000"]);
+                assert_eq!(proto.path_prefixes, vec!["src/"]);
+                assert_eq!(proto.codec_ids, vec!["json/tree"]);
+                assert_eq!(proto.capsule_visibility, "private");
+                assert_eq!(proto.max_depth, 2);
+                assert_eq!(proto.max_bytes, 8192);
+                assert_eq!(proto.time_range_start, 3000);
+                assert_eq!(proto.time_range_end, 4000);
+            }
+            _ => panic!("expected clone command"),
         }
     }
 
@@ -597,6 +1341,7 @@ mod tests {
                 remote,
                 ref_name,
                 force,
+                ..
             } => {
                 assert_eq!(remote, "origin");
                 assert_eq!(ref_name, "heads/main");

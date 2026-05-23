@@ -2,6 +2,14 @@
 
 This guide describes the current v0.1 CLI path for agent-produced work.
 
+Agents can integrate through four supported surfaces:
+
+- CLI commands for shell-first automation.
+- The Rust SDK crate `claw-vcs-agent-sdk`.
+- The TypeScript SDK in `sdk/typescript`.
+- The Python SDK in `sdk/python`.
+- The MCP stdio server, `claw mcp serve`, for MCP-compatible hosts.
+
 ## Register
 
 ```bash
@@ -107,6 +115,24 @@ For HTTP health and metrics integration, use the committed OpenAPI artifact at
 `docs/reference/daemon-http-openapi-v1.json`. For gRPC service contracts, treat
 the generated protocol code and compatibility tests as the source of truth for
 the current release line.
+
+## MCP Server
+
+Use MCP when the host already supports tool discovery and JSON-RPC over stdio:
+
+```bash
+claw mcp serve
+```
+
+The default MCP server is read-only. It exposes tools for status, intent lists,
+evidence queries, review reports, agent audits, and trust receipts. Trusted
+agents that need to create intents or changes can be launched with:
+
+```bash
+claw mcp serve --allow-write
+```
+
+See `docs/reference/mcp-server.md` for the current method and tool contract.
 
 ## Rotate or Revoke
 

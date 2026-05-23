@@ -14,21 +14,25 @@ There is no staging area. Ignored paths and `.claw/` local state are excluded ac
 
 ## JSON Output
 
-`--json` emits a structured summary for scripts:
+`--json` emits `schema_version: 1` and a structured summary for scripts.
+Revision IDs and parent IDs use the public `clw_...` object ID format.
 
 ```json
 {
+  "schema_version": 1,
+  "action": "snapshot",
   "branch": "heads/main",
   "changed_files": null,
   "merge_resolved": false,
   "patches": 0,
-  "revision_id": "<revision-id>",
+  "revision_id": "clw_...",
   "snapshot_created": true
 }
 ```
 
-Exact fields may expand while Claw is pre-1.0. Treat object IDs as opaque
-strings.
+Clean no-op snapshots return `snapshot_created: false`, `reason: "clean"`,
+`revision_id: null`, `merge_resolved: false`, `patches: 0`, and
+`changed_files: 0`.
 
 ## Exit Codes
 

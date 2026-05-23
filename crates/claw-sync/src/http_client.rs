@@ -12,10 +12,12 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::proto;
-use crate::proto::sync::{HelloResponse, PushObjectsResponse, UpdateRefsResponse};
-use crate::protocol::{CAP_PARTIAL_CLONE, CAP_PROTOCOL_V1};
+use crate::proto::sync::{
+    HelloResponse, PartialCloneFilter, PushObjectsResponse, UpdateRefsResponse,
+};
+use crate::protocol::{CAP_HOSTED_HTTP, CAP_PARTIAL_CLONE, CAP_POLICY_AWARE_PUSH, CAP_PROTOCOL_V1};
 use crate::security::{redacted_secret_marker, REPLAY_NONCE_METADATA_KEY};
-use crate::transport::SyncTransport;
+use crate::transport::{RefUpdateContext, SyncTransport};
 use crate::SyncError;
 
 #[derive(Clone)]
@@ -67,6 +69,25 @@ fn legacy_http_fallback_capabilities() -> HashSet<String> {
     ]
     .into_iter()
     .collect()
+}
+
+fn validate_hosted_capability_contract(
+    capabilities_advertised: bool,
+    capabilities: &HashSet<String>,
+) -> Result<(), SyncError> {
+    if !capabilities_advertised {
+        return Ok(());
+    }
+
+    for required in [CAP_PROTOCOL_V1, CAP_HOSTED_HTTP] {
+        if !capabilities.contains(required) {
+            return Err(SyncError::NegotiationFailed(format!(
+                "clawlab HTTP remote advertised capabilities but does not include {required} capability"
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +236,10 @@ impl HttpSyncClient {
         if self.server_capabilities.is_empty() && !self.capabilities_advertised {
             self.server_capabilities = legacy_http_fallback_capabilities();
         }
+        validate_hosted_capability_contract(
+            self.capabilities_advertised,
+            &self.server_capabilities,
+        )?;
 
         self.health_checked = true;
         Ok(())
@@ -881,6 +906,7 @@ impl HttpSyncClient {
         store: &ClawStore,
         want: &[ObjectId],
         have: &[ObjectId],
+        filter: Option<&PartialCloneFilter>,
     ) -> Result<Vec<ObjectId>, SyncError> {
         let url = self.endpoint("/objects:batch-download");
         let mut fetched = Vec::new();
@@ -892,6 +918,7 @@ impl HttpSyncClient {
                 have: have.iter().map(ObjectId::to_hex).collect(),
                 cursor: cursor.clone(),
                 limit: Some(2000),
+                filter: filter.map(HttpPartialCloneFilter::from),
             };
 
             let resp = self
@@ -964,6 +991,7 @@ impl HttpSyncClient {
         store: &ClawStore,
         want: &[ObjectId],
         have: &[ObjectId],
+        filter: Option<&PartialCloneFilter>,
     ) -> Result<Vec<ObjectId>, SyncError> {
         let url = self.endpoint("/objects:batch-download");
         let payload = DownloadRequest {
@@ -971,6 +999,7 @@ impl HttpSyncClient {
             have: have.iter().map(ObjectId::to_hex).collect(),
             cursor: None,
             limit: None,
+            filter: filter.map(HttpPartialCloneFilter::from),
         };
 
         let resp = self
@@ -1195,6 +1224,8 @@ struct RefUpdatePayload {
 #[derive(Debug, Serialize)]
 struct CasUpdateRequest {
     updates: Vec<RefUpdatePayload>,
+    #[serde(rename = "policyReceipt", skip_serializing_if = "Option::is_none")]
+    policy_receipt: Option<RefUpdateContext>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1294,6 +1325,44 @@ struct DownloadRequest {
     cursor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     limit: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    filter: Option<HttpPartialCloneFilter>,
+}
+
+#[derive(Debug, Serialize)]
+struct HttpPartialCloneFilter {
+    #[serde(rename = "intentIds", skip_serializing_if = "Vec::is_empty")]
+    intent_ids: Vec<String>,
+    #[serde(rename = "pathPrefixes", skip_serializing_if = "Vec::is_empty")]
+    path_prefixes: Vec<String>,
+    #[serde(rename = "timeRangeStart", skip_serializing_if = "Option::is_none")]
+    time_range_start: Option<u64>,
+    #[serde(rename = "timeRangeEnd", skip_serializing_if = "Option::is_none")]
+    time_range_end: Option<u64>,
+    #[serde(rename = "codecIds", skip_serializing_if = "Vec::is_empty")]
+    codec_ids: Vec<String>,
+    #[serde(rename = "capsuleVisibility", skip_serializing_if = "Option::is_none")]
+    capsule_visibility: Option<String>,
+    #[serde(rename = "maxBytes", skip_serializing_if = "Option::is_none")]
+    max_bytes: Option<u64>,
+    #[serde(rename = "maxDepth", skip_serializing_if = "Option::is_none")]
+    max_depth: Option<u32>,
+}
+
+impl From<&PartialCloneFilter> for HttpPartialCloneFilter {
+    fn from(filter: &PartialCloneFilter) -> Self {
+        Self {
+            intent_ids: filter.intent_ids.clone(),
+            path_prefixes: filter.path_prefixes.clone(),
+            time_range_start: (filter.time_range_start > 0).then_some(filter.time_range_start),
+            time_range_end: (filter.time_range_end > 0).then_some(filter.time_range_end),
+            codec_ids: filter.codec_ids.clone(),
+            capsule_visibility: (!filter.capsule_visibility.trim().is_empty())
+                .then(|| filter.capsule_visibility.clone()),
+            max_bytes: (filter.max_bytes > 0).then_some(filter.max_bytes),
+            max_depth: (filter.max_depth > 0).then_some(filter.max_depth),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1372,22 +1441,38 @@ impl SyncTransport for HttpSyncClient {
         store: &ClawStore,
         want: &[ObjectId],
         have: &[ObjectId],
+        filter: Option<PartialCloneFilter>,
     ) -> Result<Vec<ObjectId>, SyncError> {
         self.ensure_health().await?;
+
+        if filter.is_some()
+            && self.capabilities_advertised
+            && !self.server_capabilities.contains(CAP_PARTIAL_CLONE)
+        {
+            return Err(SyncError::TransferFailed(
+                "clawlab HTTP remote does not advertise partial-clone capability".to_string(),
+            ));
+        }
 
         // Prefer capability negotiation; if the server doesn't advertise capabilities yet, try
         // chunked first (newer servers) and fall back to legacy.
         if self.capabilities_advertised && !self.server_capabilities.contains(CAP_CHUNKED_OBJECTS) {
-            return self.fetch_objects_legacy(store, want, have).await;
+            return self
+                .fetch_objects_legacy(store, want, have, filter.as_ref())
+                .await;
         }
 
-        match self.fetch_objects_chunked(store, want, have).await {
+        match self
+            .fetch_objects_chunked(store, want, have, filter.as_ref())
+            .await
+        {
             Ok(result) => Ok(result),
             Err(err) => {
                 if self.capabilities_advertised {
                     return Err(err);
                 }
-                self.fetch_objects_legacy(store, want, have).await
+                self.fetch_objects_legacy(store, want, have, filter.as_ref())
+                    .await
             }
         }
     }
@@ -1397,6 +1482,26 @@ impl SyncTransport for HttpSyncClient {
         updates: &[(String, Option<ObjectId>, ObjectId)],
         force: bool,
     ) -> Result<UpdateRefsResponse, SyncError> {
+        self.update_refs_with_context(updates, force, None).await
+    }
+
+    async fn update_refs_with_context(
+        &mut self,
+        updates: &[(String, Option<ObjectId>, ObjectId)],
+        force: bool,
+        context: Option<RefUpdateContext>,
+    ) -> Result<UpdateRefsResponse, SyncError> {
+        self.ensure_health().await?;
+        if context
+            .as_ref()
+            .is_some_and(RefUpdateContext::has_policy_checks)
+            && !self.server_capabilities.contains(CAP_POLICY_AWARE_PUSH)
+        {
+            return Err(SyncError::TransferFailed(format!(
+                "clawlab HTTP remote does not advertise {CAP_POLICY_AWARE_PUSH} capability"
+            )));
+        }
+
         let url = self.endpoint("/refs:cas-update");
         let payload = CasUpdateRequest {
             updates: updates
@@ -1408,6 +1513,7 @@ impl SyncTransport for HttpSyncClient {
                     force,
                 })
                 .collect(),
+            policy_receipt: context,
         };
 
         let resp = self
@@ -1487,5 +1593,207 @@ mod tests {
         assert!(caps.contains(CAP_PROTOCOL_V1));
         assert!(caps.contains(CAP_PARTIAL_CLONE));
         assert!(caps.contains("polling-events"));
+        assert!(
+            !caps.contains(CAP_HOSTED_HTTP),
+            "legacy fallback is not the advertised hosted HTTP contract"
+        );
+    }
+
+    #[test]
+    fn advertised_hosted_capabilities_require_protocol_and_endpoint_marker() {
+        validate_hosted_capability_contract(false, &HashSet::new())
+            .expect("legacy remotes without capabilities remain compatible");
+
+        let err = validate_hosted_capability_contract(
+            true,
+            &[CAP_HOSTED_HTTP.to_string()].into_iter().collect(),
+        )
+        .expect_err("advertised hosted capabilities must include protocol marker");
+        assert!(
+            err.to_string().contains(CAP_PROTOCOL_V1),
+            "unexpected error: {err}"
+        );
+
+        let err = validate_hosted_capability_contract(
+            true,
+            &[CAP_PROTOCOL_V1.to_string()].into_iter().collect(),
+        )
+        .expect_err("advertised hosted capabilities must include hosted-http marker");
+        assert!(
+            err.to_string().contains(CAP_HOSTED_HTTP),
+            "unexpected error: {err}"
+        );
+
+        let complete = [CAP_PROTOCOL_V1.to_string(), CAP_HOSTED_HTTP.to_string()]
+            .into_iter()
+            .collect::<HashSet<_>>();
+        validate_hosted_capability_contract(true, &complete)
+            .expect("complete hosted capability baseline");
+    }
+
+    #[test]
+    fn download_request_serializes_partial_clone_filter_shape() {
+        let request = DownloadRequest {
+            want: vec!["a".to_string()],
+            have: vec!["b".to_string()],
+            cursor: None,
+            limit: Some(2000),
+            filter: Some(HttpPartialCloneFilter::from(&PartialCloneFilter {
+                intent_ids: vec!["01H00000000000000000000000".to_string()],
+                path_prefixes: vec!["src/".to_string()],
+                time_range_start: 1000,
+                time_range_end: 2000,
+                codec_ids: vec!["json/tree".to_string()],
+                capsule_visibility: "public".to_string(),
+                max_bytes: 4096,
+                max_depth: 3,
+            })),
+        };
+
+        let value = serde_json::to_value(&request).expect("serialize download request");
+        assert_eq!(
+            value["filter"]["intentIds"][0],
+            "01H00000000000000000000000"
+        );
+        assert_eq!(value["filter"]["pathPrefixes"][0], "src/");
+        assert_eq!(value["filter"]["timeRangeStart"], 1000);
+        assert_eq!(value["filter"]["timeRangeEnd"], 2000);
+        assert_eq!(value["filter"]["codecIds"][0], "json/tree");
+        assert_eq!(value["filter"]["capsuleVisibility"], "public");
+        assert_eq!(value["filter"]["maxBytes"], 4096);
+        assert_eq!(value["filter"]["maxDepth"], 3);
+    }
+
+    #[test]
+    fn cas_update_request_serializes_policy_receipt_shape() {
+        let request = CasUpdateRequest {
+            updates: vec![RefUpdatePayload {
+                name: "heads/main".to_string(),
+                old_target: Some("old".to_string()),
+                new_target: "new".to_string(),
+                force: false,
+            }],
+            policy_receipt: Some(RefUpdateContext {
+                policies: vec![crate::transport::RefUpdatePolicyCheck {
+                    id: "release-gate".to_string(),
+                    ref_name: "refs/policies/release-gate".to_string(),
+                    object: "01H00000000000000000000000".to_string(),
+                    allowed: true,
+                    reason: None,
+                }],
+                requested_capabilities: vec![CAP_POLICY_AWARE_PUSH.to_string()],
+                negotiated_capabilities: vec![CAP_PROTOCOL_V1.to_string()],
+            }),
+        };
+
+        let value = serde_json::to_value(&request).expect("serialize CAS update request");
+        assert_eq!(value["updates"][0]["name"], "heads/main");
+        assert_eq!(value["policyReceipt"]["policies"][0]["id"], "release-gate");
+        assert_eq!(
+            value["policyReceipt"]["policies"][0]["ref"],
+            "refs/policies/release-gate"
+        );
+        assert_eq!(
+            value["policyReceipt"]["requestedCapabilities"][0],
+            CAP_POLICY_AWARE_PUSH
+        );
+    }
+
+    #[tokio::test]
+    async fn hello_rejects_advertised_hosted_remote_without_endpoint_marker() {
+        let base_url = spawn_health_response(
+            r#"{"serverVersion":"clawlab-test","capabilities":["protocol:claw-sync/1","partial-clone"]}"#,
+        )
+        .await;
+        let mut client = HttpSyncClient::new(base_url, "repo".to_string(), None);
+
+        let err = client
+            .hello()
+            .await
+            .expect_err("advertised hosted remotes must include hosted-http");
+        assert!(
+            err.to_string().contains(CAP_HOSTED_HTTP),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn hello_accepts_advertised_hosted_remote_contract_baseline() {
+        let base_url = spawn_health_response(
+            r#"{"serverVersion":"clawlab-test","capabilities":["protocol:claw-sync/1","hosted-http","partial-clone"]}"#,
+        )
+        .await;
+        let mut client = HttpSyncClient::new(base_url, "repo".to_string(), None);
+
+        let hello = client.hello().await.expect("hosted hello");
+        assert_eq!(hello.server_version, "clawlab-test");
+        assert!(hello
+            .capabilities
+            .iter()
+            .any(|capability| capability == CAP_HOSTED_HTTP));
+    }
+
+    async fn spawn_health_response(body: &'static str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind health test server");
+        let addr = listener.local_addr().expect("health server addr");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept health request");
+            let mut request = [0_u8; 1024];
+            let _ = stream
+                .read(&mut request)
+                .await
+                .expect("read health request");
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("write health response");
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn hosted_ref_update_with_policy_receipt_requires_capability() {
+        let mut client = HttpSyncClient::new(
+            "https://sync.example.test".to_string(),
+            "repo".to_string(),
+            None,
+        );
+        client.health_checked = true;
+        client.capabilities_advertised = true;
+        client.server_version = Some("clawlab-http".to_string());
+        client.server_capabilities = [CAP_PROTOCOL_V1.to_string(), CAP_HOSTED_HTTP.to_string()]
+            .into_iter()
+            .collect();
+
+        let context = RefUpdateContext {
+            policies: vec![crate::transport::RefUpdatePolicyCheck {
+                id: "release-gate".to_string(),
+                ref_name: "refs/policies/release-gate".to_string(),
+                object: "01H00000000000000000000000".to_string(),
+                allowed: true,
+                reason: None,
+            }],
+            requested_capabilities: vec![CAP_POLICY_AWARE_PUSH.to_string()],
+            negotiated_capabilities: vec![CAP_PROTOCOL_V1.to_string()],
+        };
+
+        let err = client
+            .update_refs_with_context(&[], false, Some(context))
+            .await
+            .expect_err("policy-aware hosted ref update must fail closed");
+        assert!(
+            err.to_string().contains(CAP_POLICY_AWARE_PUSH),
+            "unexpected error: {err}"
+        );
     }
 }

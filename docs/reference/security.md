@@ -7,7 +7,10 @@ This page defines launch-hardening behavior for daemon and sync security surface
 - Production daemon binds beyond localhost must use bearer auth when `auth.require_auth_for_daemon = true`.
 - Production daemon binds beyond localhost must use daemon TLS or TLS termination when `tls.require_for_non_localhost = true`.
 - Bearer credentials are passed as `authorization: Bearer <token>` and must not be logged. Debug output for sync transports redacts configured bearer tokens.
-- Use `--auth-token`, `--auth-profile`, or the configured default auth profile for daemon startup.
+- Use `--auth-profile`, `--auth-token-stdin`, or the configured default auth
+  profile for daemon startup so bearer tokens do not appear in shell history or
+  process arguments. `--auth-token` remains available for compatibility and
+  local ad hoc testing.
 - `--auth-principal`, `--auth-role`, and repeated `--auth-scope` configure the daemon authorization grant attached to the bearer token. The default role is `admin` for compatibility.
 - `--client-ca-cert <path>` enables required client certificate verification for the gRPC listener. It must be used with `--tls-cert` and `--tls-key`.
 - `claw sync` can connect to TLS and mTLS gRPC remotes with `--tls-ca-cert`, `--tls-domain`, `--client-cert`, and `--client-key`. Client certificates require both the certificate and key.
@@ -69,9 +72,15 @@ Authorization failures return gRPC `PermissionDenied`. Local unauthenticated dae
   importing private material.
 - `claw agent rotate --name <agent>` replaces the trusted public key and local
   signing key for an existing agent.
+- `claw agent quarantine --name <agent>` temporarily removes the registration
+  from future signing and integration trust while preserving a reversible
+  investigation state.
 - `claw agent revoke --name <agent>` marks the registration as revoked. Revoked
   agents cannot sign new capsules through `claw ship`, and integration
   provenance checks omit revoked agent records from the trusted registry.
+- `claw agent audit` reports active, quarantined, revoked, legacy, malformed,
+  missing-key, and mismatched-key agent registrations, plus fleet triage counts
+  and per-agent recommended actions.
 - Private agent keys live under `~/.claw/agent-keys/`, outside the repository.
 - Do not commit private agent keys, auth tokens, TLS private keys, or support
   bundles without review.
@@ -80,14 +89,22 @@ Authorization failures return gRPC `PermissionDenied`. Local unauthenticated dae
 
 ## Auth Token Storage
 
-- `claw auth token set` stores auth profiles in `~/.claw/auth.toml`.
+- `claw auth token set --stdin` stores auth profiles in `~/.claw/auth.toml`
+  without placing bearer tokens in process arguments.
 - Tokens are encrypted with a local key at `~/.claw/auth.key`.
 - Treat both files as credential material. Back them up or re-provision them
   through your normal secret-management process.
 
 ## Sync Protocol Security Hooks
 
-- Sync `Hello` capability negotiation returns only daemon-supported capabilities plus the protocol marker. Current baseline: `protocol:claw-sync/1`, `partial-clone`, `event-bus`, `request-limits`. Clients run compatibility checks by default and fail closed when the negotiated protocol marker is absent.
+- Sync `Hello` capability negotiation returns only daemon-supported
+  capabilities plus the protocol marker. Current baseline:
+  `protocol:claw-sync/1`, `partial-clone`, `event-bus`, and
+  `request-limits`. Clients run compatibility checks by default and fail
+  closed when the negotiated protocol marker is absent.
+- Hosted HTTP remotes must advertise `policy-aware-push` before accepting a
+  policy-gated ref update. The client includes the evaluated policy receipt in
+  `/refs:cas-update` and fails closed when the capability is missing.
 - Event subscriptions use an internal event bus for daemon-generated ref changes. The stream emits `ref_created` and `ref_updated` events from sync ref updates.
 - Sync server options enforce per-minute request rate limits when configured with `--rate-limit-per-minute` or `queues.rate_limit_per_minute`. The same configured rate also throttles invalid or missing bearer-token failures at the gRPC auth interceptor before requests reach service handlers.
 - Push object uploads enforce per-chunk and per-request byte limits, configurable with `--max-push-chunk-bytes`, `--max-push-request-bytes`, `queues.max_push_chunk_bytes`, and `queues.max_push_request_bytes`.

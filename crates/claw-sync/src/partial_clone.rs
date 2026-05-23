@@ -33,6 +33,23 @@ pub struct PartialCloneFilter {
 }
 
 impl PartialCloneFilter {
+    fn has_non_visibility_filters(&self) -> bool {
+        !self.intent_ids.is_empty()
+            || !self.path_prefixes.is_empty()
+            || !self.codec_ids.is_empty()
+            || self.time_range.is_some()
+    }
+
+    fn has_revision_filters(&self) -> bool {
+        !self.intent_ids.is_empty()
+            || self.time_range.is_some()
+            || self.capsule_visibility.is_some()
+    }
+
+    fn has_patch_filters(&self) -> bool {
+        !self.path_prefixes.is_empty() || !self.codec_ids.is_empty()
+    }
+
     fn intent_matches_change_id(
         &self,
         store: &ClawStore,
@@ -75,6 +92,34 @@ impl PartialCloneFilter {
         }
     }
 
+    fn matches_patch(&self, patch: &claw_core::types::Patch) -> bool {
+        if !self.path_prefixes.is_empty()
+            && !self
+                .path_prefixes
+                .iter()
+                .any(|prefix| patch.target_path.starts_with(prefix))
+        {
+            return false;
+        }
+        if !self.codec_ids.is_empty() && !self.codec_ids.contains(&patch.codec_id) {
+            return false;
+        }
+        true
+    }
+
+    fn revision_matches_patch_filters(&self, store: &ClawStore, patch_ids: &[ObjectId]) -> bool {
+        if !self.has_patch_filters() {
+            return true;
+        }
+
+        patch_ids.iter().any(|patch_id| {
+            let Ok(Object::Patch(patch)) = store.load_object(patch_id) else {
+                return false;
+            };
+            self.matches_patch(&patch)
+        })
+    }
+
     pub fn matches_object(&self, store: &ClawStore, id: &ObjectId) -> bool {
         let obj = match store.load_object(id) {
             Ok(o) => o,
@@ -83,18 +128,10 @@ impl PartialCloneFilter {
 
         match &obj {
             Object::Patch(p) => {
-                if !self.path_prefixes.is_empty()
-                    && !self
-                        .path_prefixes
-                        .iter()
-                        .any(|prefix| p.target_path.starts_with(prefix))
-                {
+                if self.has_revision_filters() {
                     return false;
                 }
-                if !self.codec_ids.is_empty() && !self.codec_ids.contains(&p.codec_id) {
-                    return false;
-                }
-                true
+                self.matches_patch(p)
             }
             Object::Revision(r) => {
                 if let Some((start, end)) = self.time_range {
@@ -116,9 +153,12 @@ impl PartialCloneFilter {
                     return false;
                 }
 
-                true
+                self.revision_matches_patch_filters(store, &r.patches)
             }
             Object::Change(c) => {
+                if self.has_patch_filters() || self.time_range.is_some() {
+                    return false;
+                }
                 if !self.intent_ids.is_empty()
                     && !self
                         .intent_ids
@@ -129,6 +169,9 @@ impl PartialCloneFilter {
                 true
             }
             Object::Intent(i) => {
+                if self.has_patch_filters() || self.time_range.is_some() {
+                    return false;
+                }
                 if !self.intent_ids.is_empty()
                     && !self
                         .intent_ids
@@ -139,6 +182,12 @@ impl PartialCloneFilter {
                 true
             }
             Object::Capsule(c) => {
+                if !self.intent_ids.is_empty()
+                    || self.has_patch_filters()
+                    || self.time_range.is_some()
+                {
+                    return false;
+                }
                 let Some(visibility) = self.capsule_visibility else {
                     return true;
                 };
@@ -150,7 +199,7 @@ impl PartialCloneFilter {
                     }
                 }
             }
-            _ => true,
+            _ => !self.has_non_visibility_filters(),
         }
     }
 }
@@ -161,7 +210,7 @@ mod tests {
     use claw_core::id::{ChangeId, IntentId};
     use claw_core::object::Object;
     use claw_core::types::{
-        Blob, Capsule, CapsulePublic, Change, ChangeStatus, Intent, IntentStatus, Revision,
+        Blob, Capsule, CapsulePublic, Change, ChangeStatus, Intent, IntentStatus, Patch, Revision,
     };
 
     #[test]
@@ -338,5 +387,62 @@ mod tests {
 
         assert!(public_filter.matches_object(&store, &intent_id));
         assert!(private_filter.matches_object(&store, &intent_id));
+    }
+
+    #[test]
+    fn path_filter_matches_revisions_through_patches_without_rooting_unrelated_blobs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ClawStore::init(tmp.path()).unwrap();
+
+        let old_blob = store
+            .store_object(&Object::Blob(Blob {
+                data: b"old".to_vec(),
+                media_type: None,
+            }))
+            .unwrap();
+        let new_blob = store
+            .store_object(&Object::Blob(Blob {
+                data: b"new".to_vec(),
+                media_type: None,
+            }))
+            .unwrap();
+        let patch_id = store
+            .store_object(&Object::Patch(Patch {
+                target_path: "src/lib.rs".to_string(),
+                codec_id: "text/line".to_string(),
+                base_object: Some(old_blob),
+                result_object: Some(new_blob),
+                ops: vec![],
+                codec_payload: None,
+            }))
+            .unwrap();
+        let revision_id = store
+            .store_object(&Object::Revision(Revision {
+                change_id: None,
+                parents: vec![],
+                patches: vec![patch_id],
+                snapshot_base: None,
+                tree: None,
+                capsule_id: None,
+                author: "test".to_string(),
+                created_at_ms: 10,
+                summary: "path filter".to_string(),
+                policy_evidence: vec![],
+            }))
+            .unwrap();
+
+        let filter = PartialCloneFilter {
+            intent_ids: vec![],
+            path_prefixes: vec!["src/".to_string()],
+            codec_ids: vec![],
+            time_range: None,
+            capsule_visibility: None,
+            max_depth: None,
+            max_bytes: None,
+        };
+
+        assert!(filter.matches_object(&store, &revision_id));
+        assert!(filter.matches_object(&store, &patch_id));
+        assert!(!filter.matches_object(&store, &old_blob));
     }
 }
