@@ -798,7 +798,6 @@ jobs:
       PLAN: ${{ needs.plan.outputs.val }}
       GITHUB_USER: "axo bot"
       GITHUB_EMAIL: "admin+bot@axo.dev"
-    if: ${{ !fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -827,19 +826,31 @@ jobs:
             filename=$(echo "$release" | jq '.artifacts[] | select(endswith(".rb"))' --raw-output)
             name=$(echo "$filename" | sed "s/\.rb$//")
             version=$(echo "$release" | jq .app_version --raw-output)
+            tap_filename="$filename"
+            tap_name="$name"
+
+            if [[ "$filename" == "claw-vcs.rb" ]]; then
+              tap_filename="claw.rb"
+              tap_name="claw"
+              mv "Formula/${filename}" "Formula/${tap_filename}"
+              perl -0pi -e 's/class ClawVcs < Formula/class Claw < Formula/' "Formula/${tap_filename}"
+            fi
 
             export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
             brew update
             # We avoid reformatting user-provided data such as the app description and homepage.
-            brew style --except-cops FormulaAudit/Homepage,FormulaAudit/Desc,FormulaAuditStrict --fix "Formula/${filename}" || true
+            brew style --except-cops FormulaAudit/Homepage,FormulaAudit/Desc,FormulaAuditStrict --fix "Formula/${tap_filename}" || true
 
-            git add "Formula/${filename}"
-            if git diff --cached --quiet -- "Formula/${filename}"; then
-              echo "No Homebrew formula changes for ${filename}; skipping commit."
+            git add "Formula/${tap_filename}"
+            if [[ "$tap_filename" != "$filename" ]]; then
+              git rm -f --ignore-unmatch "Formula/${filename}"
+            fi
+            if git diff --cached --quiet -- Formula; then
+              echo "No Homebrew formula changes for ${tap_filename}; skipping commit."
               continue
             fi
 
-            git commit -m "${name} ${version}"
+            git commit -m "${tap_name} ${version}"
           done
           auth_header="$(printf 'x-access-token:%s' "$HOMEBREW_TAP_TOKEN" | base64 -w 0)"
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" push

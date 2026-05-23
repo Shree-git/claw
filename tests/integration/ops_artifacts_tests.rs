@@ -630,6 +630,12 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         package_strategy.contains("historical artifact live; launch verification pending"),
         "package registry strategy must distinguish existing artifacts from launch-ready verification"
     );
+    assert!(
+        package_strategy.contains("| Homebrew | verified live |")
+            && package_strategy.contains("brew install shree-git/tap/claw")
+            && package_strategy.contains("claw 0.1.2-beta.5"),
+        "package registry strategy must record the verified Homebrew tap install"
+    );
 
     let helm_values = read_workspace_file("crates/claw/deploy/helm/claw/values.yaml");
     assert!(
@@ -931,6 +937,26 @@ fn public_launch_assets_exist_and_are_upload_ready() {
             "release workflow must pre-verify artifact provenance before upload: {phrase}"
         );
     }
+    for phrase in [
+        "tap_filename=\"claw.rb\"",
+        "tap_name=\"claw\"",
+        "class ClawVcs < Formula",
+        "class Claw < Formula",
+        "git rm -f --ignore-unmatch \"Formula/${filename}\"",
+        "git diff --cached --quiet -- Formula",
+        "git commit -m \"${tap_name} ${version}\"",
+    ] {
+        assert!(
+            release_workflow.contains(phrase),
+            "release workflow must publish the public Homebrew formula name: {phrase}"
+        );
+    }
+    assert!(
+        !release_workflow.contains(
+            "announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases"
+        ),
+        "Homebrew tap publishing must not skip launch beta releases"
+    );
     for phrase in [
         "claw-vcs-x86_64-unknown-linux-gnu.tar.xz",
         "claw-vcs-aarch64-apple-darwin.tar.xz",

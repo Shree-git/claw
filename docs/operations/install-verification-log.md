@@ -49,6 +49,31 @@ covered by `.github/workflows/release-channel-smoke.yml`.
 
 The release-channel blocker is closed for `v0.1.2-beta.5`.
 
+### v0.1.2-beta.5 Homebrew Tap Verification
+
+Command shape:
+
+```bash
+brew install shree-git/tap/claw
+claw --version
+CLAW_RELEASE_VERIFY_WORKDIR=/tmp/claw-release-verification/v0.1.2-beta.5-homebrew-live \
+  CLAW_RELEASE_VERIFY_REPORT=/tmp/claw-release-verification/v0.1.2-beta.5-homebrew-live.json \
+  CLAW_VERIFY_HOMEBREW=1 \
+  scripts/verify-release-channel.sh v0.1.2-beta.5
+```
+
+Observed result:
+
+```text
+brew install shree-git/tap/claw: installed Formula claw (0.1.2-beta.5)
+claw --version: claw 0.1.2-beta.5
+release-channel verifier with CLAW_VERIFY_HOMEBREW=1: passed
+report: /tmp/claw-release-verification/v0.1.2-beta.5-homebrew-live.json
+```
+
+Status: pass. `Formula/claw.rb` in `shree-git/homebrew-tap` now points at the
+launch-hardening release assets and checksums.
+
 ## 2026-05-21
 
 Environment:
@@ -317,8 +342,7 @@ CLAW_RELEASE_VERIFY_REPORT=release-verification/<launch-tag>-unix.json scripts/v
 - Shell installer from the next launch-hardening release.
 - PowerShell installer on Windows.
 - Windows MSI on Windows.
-- Homebrew formula after the tap points at the launch-hardening release.
-- `cargo install --git https://github.com/shree-git/claw-vcs.git --tag <launch-tag> --package claw-vcs --locked` for the next launch-hardening release tag.
+- `cargo install --git https://github.com/shree-git/claw-vcs.git --tag <launch-tag> claw-vcs --locked` for the next launch-hardening release tag.
 
 ## Launch-Hardening Release Evidence Template
 
