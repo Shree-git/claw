@@ -1,0 +1,139 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - img "Claw VCS preview" [ref=e5]
+      - generic [ref=e6]:
+        - strong [ref=e7]: Claw Playground
+        - text: Browser-only object lab
+    - navigation "Playground views" [ref=e8]:
+      - button "Board" [ref=e9] [cursor=pointer]
+      - button "Policy" [ref=e10] [cursor=pointer]
+      - button "Conflict" [ref=e11] [cursor=pointer]
+      - button "Receipts" [ref=e12] [cursor=pointer]
+    - generic [ref=e13]:
+      - strong [ref=e14]: Current repo
+      - paragraph [ref=e15]: Everything is local to this page. Export JSON when you want to keep the session.
+      - generic [ref=e16]:
+        - generic [ref=e17]:
+          - strong [ref=e18]: "2"
+          - text: intents
+        - generic [ref=e19]:
+          - strong [ref=e20]: "2"
+          - text: changes
+        - generic [ref=e21]:
+          - strong [ref=e22]: "1"
+          - text: policies
+        - generic [ref=e23]:
+          - strong [ref=e24]: "1"
+          - text: blockers
+  - main [ref=e25]:
+    - generic [ref=e26]:
+      - generic [ref=e27]:
+        - heading "Intent Board" [level=1] [ref=e28]
+        - paragraph [ref=e29]: Create intents, assign agent changes, and watch the graph update.
+      - generic [ref=e30]:
+        - button "Reset Demo" [ref=e31] [cursor=pointer]
+        - button "Export JSON" [ref=e32] [cursor=pointer]
+    - generic [ref=e34]:
+      - generic [ref=e35]:
+        - generic [ref=e36]:
+          - heading "Intents" [level=2] [ref=e37]
+          - generic [ref=e38]: int-1
+        - generic [ref=e39]:
+          - generic [ref=e40]:
+            - generic [ref=e41]:
+              - generic [ref=e42]: Title
+              - textbox "Title" [ref=e43]: Add audit export
+            - generic [ref=e44]:
+              - generic [ref=e45]: Goal
+              - textbox "Goal" [ref=e46]: Create a manager-readable audit narrative from an intent history.
+            - button "Create Intent" [ref=e47] [cursor=pointer]
+          - generic [ref=e48]:
+            - button "Add audit export open Turn an intent and change history into a readable audit narrative. 1 linked change" [ref=e49] [cursor=pointer]:
+              - generic [ref=e50]:
+                - strong [ref=e51]: Add audit export
+                - generic [ref=e52]: open
+              - generic [ref=e53]: Turn an intent and change history into a readable audit narrative.
+              - generic [ref=e54]: 1 linked change
+            - button "Harden deploy policy blocked Require checks and review before infra changes integrate. 1 linked change" [ref=e55] [cursor=pointer]:
+              - generic [ref=e56]:
+                - strong [ref=e57]: Harden deploy policy
+                - generic [ref=e58]: blocked
+              - generic [ref=e59]: Require checks and review before infra changes integrate.
+              - generic [ref=e60]: 1 linked change
+      - generic [ref=e61]:
+        - generic [ref=e62]:
+          - heading "Agent Changes" [level=2] [ref=e63]
+          - generic [ref=e64]: 1 change
+        - generic [ref=e65]:
+          - generic [ref=e66]:
+            - generic [ref=e67]:
+              - generic [ref=e68]:
+                - generic [ref=e69]: Agent
+                - textbox "Agent" [ref=e70]: review-bot
+              - generic [ref=e71]:
+                - generic [ref=e72]: Touched path
+                - textbox "Touched path" [ref=e73]: docs/audit.md
+            - generic [ref=e74]:
+              - generic [ref=e75]:
+                - generic [ref=e76]: Evidence
+                - textbox "Evidence" [ref=e77]: test
+              - generic [ref=e78]:
+                - generic [ref=e79]: Status
+                - combobox "Status" [ref=e80]:
+                  - option "pass" [selected]
+                  - option "fail"
+                  - option "missing"
+            - button "Add Agent Change" [ref=e81] [cursor=pointer]
+          - generic [ref=e83]:
+            - generic [ref=e84]:
+              - strong [ref=e85]: chg-1 by story-agent
+              - generic [ref=e86]: reviewed
+            - generic [ref=e87]: docs/audit.md
+            - generic [ref=e88]:
+              - generic [ref=e89]: test=pass
+              - generic [ref=e90]: lint=pass
+      - generic [ref=e91]:
+        - generic [ref=e92]:
+          - heading "Intent Graph" [level=2] [ref=e93]
+          - generic [ref=e94]: intent -> change -> evidence -> policy
+        - img "Intent graph" [ref=e96]:
+          - generic [ref=e97]:
+            - generic [ref=e99]: Goal
+            - generic [ref=e100]: Add audit export
+          - generic [ref=e101]:
+            - generic [ref=e103]: Agent
+            - generic [ref=e104]: story-agent
+          - generic [ref=e105]:
+            - generic [ref=e107]: Change
+            - generic [ref=e108]: chg-1
+          - generic [ref=e109]:
+            - generic [ref=e111]: Revision
+            - generic [ref=e112]: rev-chg-1
+          - generic [ref=e113]:
+            - generic [ref=e115]: Evidence
+            - generic [ref=e116]: all evidence pass
+          - generic [ref=e117]:
+            - generic [ref=e119]: Policy
+            - generic [ref=e120]: policy pass
+          - generic [ref=e121]:
+            - generic [ref=e123]: Goal
+            - generic [ref=e124]: Harden deploy policy
+          - generic [ref=e125]:
+            - generic [ref=e127]: Agent
+            - generic [ref=e128]: deploy-agent
+          - generic [ref=e129]:
+            - generic [ref=e131]: Change
+            - generic [ref=e132]: chg-2
+          - generic [ref=e133]:
+            - generic [ref=e135]: Revision
+            - generic [ref=e136]: rev-chg-2
+          - generic [ref=e137]:
+            - generic [ref=e139]: Evidence
+            - generic [ref=e140]: all evidence pass
+          - generic [ref=e141]:
+            - generic [ref=e143]: Policy
+            - generic [ref=e144]: policy blocks
+          - generic [ref=e145]:
+            - generic [ref=e147]: Blocker
+            - generic [ref=e148]: missing lint; human r...

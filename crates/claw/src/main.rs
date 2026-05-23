@@ -4,6 +4,7 @@
 //! command dispatch for the `claw` executable.
 
 use std::ffi::OsStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use clap::error::ErrorKind;
 use clap::Parser;
@@ -23,6 +24,8 @@ mod worktree;
 use commands::Commands;
 use commands::{ErrorFormat, RuntimeOptions};
 use error::CliDiagnostic;
+
+static CLI_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 enum ProfileArg {
@@ -77,7 +80,8 @@ async fn main() -> anyhow::Result<()> {
                 }
                 (ErrorFormat::Json, kind) => {
                     let diagnostic = CliDiagnostic::from_usage_error(err.to_string(), kind);
-                    print_json_diagnostic(&diagnostic)?;
+                    let request_id = new_cli_request_id()?;
+                    print_json_diagnostic(&diagnostic, &request_id)?;
                 }
                 (ErrorFormat::Human, _) => {
                     err.print()?;
@@ -100,13 +104,14 @@ async fn main() -> anyhow::Result<()> {
 
     if let Err(err) = cli.command.run(&runtime).await {
         let diagnostic = CliDiagnostic::from_error(&err);
+        let request_id = new_cli_request_id()?;
         match runtime.error_format {
             ErrorFormat::Human => {
-                diagnostic.print_human();
+                diagnostic.print_human(&request_id);
                 std::process::exit(diagnostic.exit_code);
             }
             ErrorFormat::Json => {
-                print_json_diagnostic(&diagnostic)?;
+                print_json_diagnostic(&diagnostic, &request_id)?;
                 std::process::exit(diagnostic.exit_code);
             }
         }
@@ -150,16 +155,23 @@ where
     ErrorFormat::Human
 }
 
-fn print_json_diagnostic(diagnostic: &CliDiagnostic) -> anyhow::Result<()> {
-    let request_id = format!(
-        "req_{}",
+fn new_cli_request_id() -> anyhow::Result<String> {
+    let counter = CLI_REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    Ok(format!(
+        "req_{}_{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
-            .as_millis()
-    );
+            .as_millis(),
+        counter
+    ))
+}
+
+fn print_json_diagnostic(diagnostic: &CliDiagnostic, request_id: &str) -> anyhow::Result<()> {
     let envelope = serde_json::json!({
+        "schema_version": diagnostic.schema_version,
         "code": diagnostic.code,
         "message": diagnostic.message,
+        "reason": diagnostic.reason,
         "request_id": request_id,
         "remediation": diagnostic.remediation,
         "exit_code": diagnostic.exit_code,
@@ -175,7 +187,9 @@ mod tests {
 
     use crate::commands::ErrorFormat;
 
-    use super::{requested_error_format_from_args, Cli, ErrorFormatArg, ProfileArg};
+    use super::{
+        new_cli_request_id, requested_error_format_from_args, Cli, ErrorFormatArg, ProfileArg,
+    };
 
     #[test]
     fn parses_global_flags_defaults() {
@@ -226,5 +240,29 @@ mod tests {
             requested_error_format_from_args(["--error-format", "human", "wat"]),
             ErrorFormat::Human
         ));
+    }
+
+    #[test]
+    fn cli_request_ids_are_prefixed_and_unique_within_process() {
+        let first = new_cli_request_id().expect("first request id");
+        let second = new_cli_request_id().expect("second request id");
+
+        assert_cli_request_id_shape(&first);
+        assert_cli_request_id_shape(&second);
+        assert_ne!(first, second);
+    }
+
+    fn assert_cli_request_id_shape(request_id: &str) {
+        let parts: Vec<&str> = request_id.split('_').collect();
+        assert_eq!(parts.len(), 3, "request id must be req_<millis>_<counter>");
+        assert_eq!(parts[0], "req");
+        assert!(
+            parts[1].parse::<u128>().is_ok(),
+            "request id timestamp must be numeric: {request_id}"
+        );
+        assert!(
+            parts[2].parse::<u64>().is_ok(),
+            "request id counter must be numeric: {request_id}"
+        );
     }
 }

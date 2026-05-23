@@ -144,14 +144,14 @@ pub fn materialize_tree(
                         std::os::unix::fs::symlink(target.as_ref(), &path)?;
                     }
                     #[cfg(not(unix))]
-                    std::fs::write(&path, &b.data)?;
+                    write_file_atomic(&path, &b.data)?;
                 }
             }
             _ => {
                 let obj = store.load_object(&entry.object_id)?;
                 if let Object::Blob(b) = obj {
                     remove_path_if_exists(&path)?;
-                    std::fs::write(&path, &b.data)?;
+                    write_file_atomic(&path, &b.data)?;
                     #[cfg(unix)]
                     if entry.mode == FileMode::Executable {
                         use std::os::unix::fs::PermissionsExt;
@@ -162,6 +162,27 @@ pub fn materialize_tree(
                 }
             }
         }
+    }
+    Ok(())
+}
+
+fn write_file_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("path has no parent: {}", path.display()))?;
+    std::fs::create_dir_all(parent)?;
+
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    {
+        use std::io::Write;
+
+        let file = temp.as_file_mut();
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    temp.persist(path).map_err(|err| err.error)?;
+    if let Ok(parent_dir) = std::fs::File::open(parent) {
+        parent_dir.sync_all()?;
     }
     Ok(())
 }
@@ -225,4 +246,51 @@ pub fn collect_tracked_paths(
         }
     }
     Ok(paths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use claw_core::object::Object;
+    use claw_core::types::{Blob, FileMode, Tree, TreeEntry};
+    use claw_store::ClawStore;
+
+    #[test]
+    fn materialize_tree_writes_nested_files_atomically() {
+        let repo = tempfile::tempdir().unwrap();
+        let store = ClawStore::init(repo.path()).unwrap();
+
+        let blob_id = store
+            .store_object(&Object::Blob(Blob {
+                data: b"hello\n".to_vec(),
+                media_type: None,
+            }))
+            .unwrap();
+        let child_tree_id = store
+            .store_object(&Object::Tree(Tree {
+                entries: vec![TreeEntry {
+                    name: "file.txt".to_string(),
+                    mode: FileMode::Regular,
+                    object_id: blob_id,
+                }],
+            }))
+            .unwrap();
+        let root_tree_id = store
+            .store_object(&Object::Tree(Tree {
+                entries: vec![TreeEntry {
+                    name: "nested".to_string(),
+                    mode: FileMode::Directory,
+                    object_id: child_tree_id,
+                }],
+            }))
+            .unwrap();
+
+        let out = repo.path().join("checkout");
+        materialize_tree(&store, &root_tree_id, &out).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(out.join("nested").join("file.txt")).unwrap(),
+            "hello\n"
+        );
+    }
 }

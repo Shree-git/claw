@@ -9,6 +9,7 @@ members = [
     "crates/claw-policy",
     "crates/claw-sync",
     "crates/claw-git",
+    "crates/claw-agent-sdk",
     "crates/claw",
     "tests/integration",
 ]
@@ -46,6 +47,7 @@ rand = "0.8"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 toml = "0.8"
 prost = "0.14"
 prost-types = "0.14"
@@ -110,6 +112,7 @@ claw-crypto = { package = "claw-vcs-crypto", version = "0.1.2-beta.5", path = "c
 claw-policy = { package = "claw-vcs-policy", version = "0.1.2-beta.5", path = "crates/claw-policy" }
 claw-sync = { package = "claw-vcs-sync", version = "0.1.2-beta.5", path = "crates/claw-sync" }
 claw-git = { package = "claw-vcs-git", version = "0.1.2-beta.5", path = "crates/claw-git" }
+claw-agent-sdk = { package = "claw-vcs-agent-sdk", version = "0.1.2-beta.5", path = "crates/claw-agent-sdk" }
 
 # The profile that 'dist' will build with
 [profile.dist]

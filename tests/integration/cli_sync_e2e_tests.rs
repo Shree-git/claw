@@ -148,10 +148,19 @@ fn daemon_auth_health_and_sync_round_trip_work_via_built_binary() {
 
     let dry_push = env.run_ok(
         &clone_a,
-        ["sync", "push", "--remote", "origin", "--dry-run"],
+        ["sync", "push", "--remote", "origin", "--dry-run", "--json"],
     );
-    assert!(dry_push.stdout.contains("Dry run: would push"));
-    assert!(dry_push.stdout.contains("Remote ref update skipped."));
+    let dry_push_json = dry_push.stdout_json();
+    assert_eq!(dry_push_json["schema_version"], 1);
+    assert_eq!(dry_push_json["action"], "sync.push");
+    assert_eq!(dry_push_json["dry_run"], true);
+    assert_eq!(dry_push_json["remote"], "origin");
+    assert_eq!(dry_push_json["ref_name"], "heads/main");
+    assert_eq!(dry_push_json["upload"]["skipped"], true);
+    assert_eq!(dry_push_json["ref_update"]["skipped"], true);
+    assert!(dry_push_json["object_count"]
+        .as_u64()
+        .is_some_and(|count| count > 0));
 
     let dry_pull = env.run_ok(&clone_b, ["sync", "pull", "--remote", "origin"]);
     assert!(dry_pull.stdout.contains("Updated heads/main"));
@@ -161,8 +170,17 @@ fn daemon_auth_health_and_sync_round_trip_work_via_built_binary() {
     assert!(pushed.stdout.contains("Pushed heads/main to origin"));
 
     assert_eq!(env.read_file(&clone_b.join("sync.txt")), "version one\n");
-    let pulled = env.run_ok(&clone_b, ["sync", "pull", "--remote", "origin"]);
-    assert!(pulled.stdout.contains("Working tree updated."));
+    let pulled = env.run_ok(&clone_b, ["sync", "pull", "--remote", "origin", "--json"]);
+    let pulled_json = pulled.stdout_json();
+    assert_eq!(pulled_json["schema_version"], 1);
+    assert_eq!(pulled_json["action"], "sync.pull");
+    assert_eq!(pulled_json["remote"], "origin");
+    assert_eq!(pulled_json["ref_name"], "heads/main");
+    assert_eq!(pulled_json["remote_ref_found"], true);
+    assert_eq!(pulled_json["target_available"], true);
+    assert_eq!(pulled_json["ref_update"]["skipped"], false);
+    assert_eq!(pulled_json["ref_update"]["success"], true);
+    assert_eq!(pulled_json["worktree"]["updated"], true);
     assert_eq!(
         env.read_file(&clone_b.join("sync.txt")),
         "version two from clone a\n"
@@ -216,6 +234,104 @@ fn daemon_auth_health_and_sync_round_trip_work_via_built_binary() {
             "secret token leaked into daemon or CLI output: {secret}"
         );
     }
+}
+
+#[test]
+fn sync_clone_with_filters_succeeds_when_ref_target_is_not_fetched() {
+    let env = CliTestEnv::new();
+    let source = env.init_repo("partial-clone-source");
+
+    env.run_ok(
+        env.temp_root(),
+        [
+            "auth",
+            "token",
+            "set",
+            "partial-token",
+            "--profile",
+            "partial",
+            "--base-url",
+            "http://127.0.0.1",
+        ],
+    );
+
+    env.write_file(&source.join("src").join("keep.txt"), "one\n");
+    env.run_ok(&source, ["snapshot", "-m", "Partial clone baseline"]);
+    env.write_file(&source.join("src").join("keep.txt"), "two\n");
+    env.run_ok(&source, ["snapshot", "-m", "Partial clone update"]);
+
+    let daemon = env.spawn_daemon(
+        &source,
+        vec![OsString::from("--auth-profile"), OsString::from("partial")],
+    );
+
+    let clone_path = env.repo_path("partial-clone-filtered");
+    let cloned = env.run_ok(
+        env.temp_root(),
+        [
+            "sync",
+            "clone",
+            "--json",
+            "--token-profile",
+            "partial",
+            daemon.grpc_endpoint.as_str(),
+            clone_path.to_str().expect("clone path utf-8"),
+            "--path-prefix",
+            "does-not-match/",
+        ],
+    );
+
+    let cloned_json = cloned.stdout_json();
+    assert_eq!(cloned_json["schema_version"], 1);
+    assert_eq!(cloned_json["action"], "sync.clone");
+    assert_eq!(cloned_json["remote"], daemon.grpc_endpoint.as_str());
+    assert_eq!(cloned_json["kind"], "grpc");
+    assert_eq!(
+        cloned_json["path"],
+        clone_path.to_str().expect("clone path utf-8")
+    );
+    assert_eq!(cloned_json["installed_ref_count"], 0);
+    assert_eq!(
+        cloned_json["fetched_count"]
+            .as_u64()
+            .expect("fetched count"),
+        0,
+        "filtered clone should report that no objects matched the filter"
+    );
+    assert!(
+        cloned_json["skipped_refs"]
+            .as_array()
+            .expect("skipped refs")
+            .iter()
+            .any(|entry| entry["name"] == "heads/main"),
+        "filtered clone receipt should report the skipped advertised ref"
+    );
+    assert_eq!(cloned_json["filter"]["active"], true);
+    assert_eq!(
+        cloned_json["filter"]["dimensions"],
+        serde_json::json!(["path"])
+    );
+    let path_prefixes = cloned_json["filter"]["path_prefixes"]
+        .as_array()
+        .expect("path prefixes");
+    assert_eq!(path_prefixes.len(), 1);
+    assert_eq!(path_prefixes[0], "does-not-match/");
+    assert!(cloned_json["filter"]["byte_budget"].is_null());
+    assert_eq!(cloned_json["head"], "heads/main");
+    assert_eq!(cloned_json["checkout"]["updated"], false);
+    assert_eq!(cloned_json["checkout"]["skipped"], true);
+    assert_eq!(cloned_json["remote_config"]["name"], "origin");
+    assert!(cloned_json["remote_config"]["path"]
+        .as_str()
+        .expect("remote config path")
+        .ends_with(".claw/remotes.toml"));
+    assert!(
+        !clone_path.join("src").join("keep.txt").exists(),
+        "filtered clone must not materialize a worktree from an unfetched ref"
+    );
+
+    let remotes = env.run_ok(&clone_path, ["remote", "list"]);
+    assert!(remotes.stdout.contains("origin\tgrpc\t"));
 }
 
 #[test]

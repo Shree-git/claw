@@ -13,7 +13,7 @@ use crate::proto::sync::sync_service_client::SyncServiceClient;
 use crate::proto::sync::*;
 use crate::protocol::{server_capabilities, SYNC_PROTOCOL_VERSION};
 use crate::security::REPLAY_NONCE_METADATA_KEY;
-use crate::transport::{GrpcTlsConfig, RemoteTransportConfig, SyncTransport};
+use crate::transport::{GrpcTlsConfig, RefUpdateContext, RemoteTransportConfig, SyncTransport};
 use crate::SyncError;
 
 pub struct SyncClient {
@@ -190,12 +190,17 @@ impl SyncClient {
         store: &ClawStore,
         want: &[ObjectId],
         have: &[ObjectId],
+        filter: Option<PartialCloneFilter>,
     ) -> Result<Vec<ObjectId>, SyncError> {
         let attempts = self.retry_policy.attempts();
         let mut last_err = None;
 
         for attempt in 1..=attempts {
-            match self.inner.fetch_objects(store, want, have).await {
+            match self
+                .inner
+                .fetch_objects(store, want, have, filter.clone())
+                .await
+            {
                 Ok(resp) => return Ok(resp),
                 Err(err) => {
                     let retryable = self.should_retry(&err);
@@ -217,16 +222,24 @@ impl SyncClient {
         &mut self,
         updates: &[(String, Option<ObjectId>, ObjectId)],
         force: bool,
+        context: Option<RefUpdateContext>,
     ) -> Result<UpdateRefsResponse, SyncError> {
         if self.retry_policy.idempotent_only {
-            return self.inner.update_refs(updates, force).await;
+            return self
+                .inner
+                .update_refs_with_context(updates, force, context)
+                .await;
         }
 
         let attempts = self.retry_policy.attempts();
         let mut last_err = None;
 
         for attempt in 1..=attempts {
-            match self.inner.update_refs(updates, force).await {
+            match self
+                .inner
+                .update_refs_with_context(updates, force, context.clone())
+                .await
+            {
                 Ok(resp) => return Ok(resp),
                 Err(err) => {
                     let retryable = self.should_retry(&err);
@@ -292,7 +305,17 @@ impl SyncClient {
         want: &[ObjectId],
         have: &[ObjectId],
     ) -> Result<Vec<ObjectId>, SyncError> {
-        self.retry_fetch_objects(store, want, have).await
+        self.retry_fetch_objects(store, want, have, None).await
+    }
+
+    pub async fn fetch_objects_filtered(
+        &mut self,
+        store: &ClawStore,
+        want: &[ObjectId],
+        have: &[ObjectId],
+        filter: Option<PartialCloneFilter>,
+    ) -> Result<Vec<ObjectId>, SyncError> {
+        self.retry_fetch_objects(store, want, have, filter).await
     }
 
     pub async fn update_refs(
@@ -300,7 +323,16 @@ impl SyncClient {
         updates: &[(String, Option<ObjectId>, ObjectId)],
         force: bool,
     ) -> Result<UpdateRefsResponse, SyncError> {
-        self.retry_update_refs(updates, force).await
+        self.retry_update_refs(updates, force, None).await
+    }
+
+    pub async fn update_refs_with_context(
+        &mut self,
+        updates: &[(String, Option<ObjectId>, ObjectId)],
+        force: bool,
+        context: RefUpdateContext,
+    ) -> Result<UpdateRefsResponse, SyncError> {
+        self.retry_update_refs(updates, force, Some(context)).await
     }
 
     pub async fn push_objects(
@@ -452,6 +484,7 @@ impl SyncTransport for GrpcSyncClient {
         store: &ClawStore,
         want: &[ObjectId],
         have: &[ObjectId],
+        filter: Option<PartialCloneFilter>,
     ) -> Result<Vec<ObjectId>, SyncError> {
         let want_msgs: Vec<_> = want
             .iter()
@@ -471,7 +504,7 @@ impl SyncTransport for GrpcSyncClient {
             .fetch_objects(self.with_auth(tonic::Request::new(FetchObjectsRequest {
                 want: want_msgs,
                 have: have_msgs,
-                filter: None,
+                filter,
             }))?)
             .await?;
 
@@ -605,6 +638,7 @@ mod tests {
             _store: &ClawStore,
             _want: &[ObjectId],
             _have: &[ObjectId],
+            _filter: Option<PartialCloneFilter>,
         ) -> Result<Vec<ObjectId>, SyncError> {
             Ok(Vec::new())
         }

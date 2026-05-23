@@ -23,6 +23,8 @@ The release workflow publishes these fields in
 `claw-<tag>.release-metadata.json`. The metadata asset is checksummed, signed,
 covered by SLSA provenance, covered by the release SBOM attestation, and
 validated by `scripts/verify-release-channel.sh`.
+The verifier's machine-readable pass/fail evidence is documented in
+[Release Channel Report](../reference/release-channel-report.md).
 
 ## Local Rebuild
 

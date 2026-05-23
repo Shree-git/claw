@@ -96,7 +96,19 @@ pub fn run(args: LogArgs) -> anyhow::Result<()> {
                 obj
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&json_entries)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": 1,
+                "action": "log",
+                "ref": args.ref_name,
+                "all": args.all,
+                "limit": args.limit,
+                "tip_count": tips.len(),
+                "entry_count": json_entries.len(),
+                "entries": json_entries,
+            }))?
+        );
     } else {
         for entry in &entries {
             println!("revision {}", entry.revision_id);

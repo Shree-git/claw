@@ -3,13 +3,18 @@ use clap::{Args, Subcommand};
 use claw_core::id::ObjectId;
 use claw_core::object::Object;
 use claw_store::ClawStore;
+use serde_json::json;
 
 use crate::config::find_repo_root;
+use crate::conflict_writer;
 use crate::merge_state;
 use crate::worktree;
 
 #[derive(Args)]
 pub struct ResolveArgs {
+    /// Emit machine-readable JSON output
+    #[arg(long)]
+    json: bool,
     #[command(subcommand)]
     command: ResolveCommand,
 }
@@ -29,23 +34,86 @@ enum ResolveCommand {
 
 pub fn run(args: ResolveArgs) -> anyhow::Result<()> {
     match args.command {
-        ResolveCommand::List => run_list(),
-        ResolveCommand::Mark { path } => run_mark(&path),
-        ResolveCommand::Abort => run_abort(),
+        ResolveCommand::List => run_list(args.json),
+        ResolveCommand::Mark { path } => run_mark(&path, args.json),
+        ResolveCommand::Abort => run_abort(args.json),
     }
 }
 
-fn run_list() -> anyhow::Result<()> {
+fn run_list(json_output: bool) -> anyhow::Result<()> {
     let root = find_repo_root()?;
     let store = ClawStore::open(&root)?;
     let claw_dir = store.layout().claw_dir();
 
     if !merge_state::exists(&claw_dir) {
+        if json_output {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema_version": 1,
+                    "action": "resolve.list",
+                    "merge_in_progress": false,
+                    "left_ref": null,
+                    "right_ref": null,
+                    "left_revision": null,
+                    "right_revision": null,
+                    "base_revision": null,
+                    "conflict_count": 0,
+                    "ready_count": 0,
+                    "unresolved_count": 0,
+                    "conflicts": [],
+                }))?
+            );
+            return Ok(());
+        }
         println!("No merge in progress.");
         return Ok(());
     }
 
     let ms = merge_state::read_from(&claw_dir)?;
+    if json_output {
+        let conflicts: Vec<_> = ms
+            .conflicts
+            .iter()
+            .map(|conflict| {
+                let file_path = root.join(&conflict.file_path);
+                let has_markers = check_conflict_markers(&file_path, &conflict.codec_id);
+                json!({
+                    "path": conflict.file_path,
+                    "conflict_id": conflict.conflict_id,
+                    "codec": conflict.codec_id,
+                    "status": if has_markers { "unresolved" } else { "ready" },
+                    "has_markers": has_markers,
+                    "reason": conflict.reason,
+                    "regions": conflict.regions,
+                })
+            })
+            .collect();
+        let ready_count = conflicts
+            .iter()
+            .filter(|conflict| conflict["status"] == "ready")
+            .count();
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "schema_version": 1,
+                "action": "resolve.list",
+                "merge_in_progress": true,
+                "left_ref": ms.merge.left_ref,
+                "right_ref": ms.merge.right_ref,
+                "left_revision": ms.merge.left_revision,
+                "right_revision": ms.merge.right_revision,
+                "base_revision": ms.merge.base_revision,
+                "conflict_count": conflicts.len(),
+                "ready_count": ready_count,
+                "unresolved_count": conflicts.len().saturating_sub(ready_count),
+                "conflicts": conflicts,
+            }))?
+        );
+        return Ok(());
+    }
+
     println!("Merging: {} into {}", ms.merge.right_ref, ms.merge.left_ref);
     println!();
 
@@ -62,6 +130,18 @@ fn run_list() -> anyhow::Result<()> {
             "  {} {} ({})",
             status_tag, conflict.file_path, conflict.codec_id
         );
+        if let Some(reason) = &conflict.reason {
+            println!("    reason: {reason}");
+        }
+        if !conflict.regions.is_empty() {
+            println!("    collided regions:");
+            for region in &conflict.regions {
+                println!(
+                    "      {} {} at {} ({})",
+                    region.side, region.op_type, region.address, region.patch_id
+                );
+            }
+        }
     }
 
     println!();
@@ -71,7 +151,7 @@ fn run_list() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_mark(path: &str) -> anyhow::Result<()> {
+fn run_mark(path: &str, json_output: bool) -> anyhow::Result<()> {
     let root = find_repo_root()?;
     let store = ClawStore::open(&root)?;
     let claw_dir = store.layout().claw_dir();
@@ -99,14 +179,30 @@ fn run_mark(path: &str) -> anyhow::Result<()> {
     }
 
     // Remove conflict sidecars
-    let base_sidecar = root.join(format!("{}.BASE", path));
-    let right_sidecar = root.join(format!("{}.RIGHT", path));
+    let conflicted_path = root.join(path);
+    let base_sidecar = conflict_writer::sidecar_path(&conflicted_path, "BASE");
+    let right_sidecar = conflict_writer::sidecar_path(&conflicted_path, "RIGHT");
     let _ = std::fs::remove_file(base_sidecar);
     let _ = std::fs::remove_file(right_sidecar);
 
     // Remove from conflicts list
     ms.conflicts.remove(idx);
     merge_state::write_to(&claw_dir, &ms)?;
+
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "schema_version": 1,
+                "action": "resolve.mark",
+                "path": path,
+                "marked": true,
+                "remaining_conflict_count": ms.conflicts.len(),
+                "merge_complete": ms.conflicts.is_empty(),
+            }))?
+        );
+        return Ok(());
+    }
 
     println!("Marked '{}' as resolved.", path);
     if ms.conflicts.is_empty() {
@@ -118,7 +214,7 @@ fn run_mark(path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_abort() -> anyhow::Result<()> {
+fn run_abort(json_output: bool) -> anyhow::Result<()> {
     let root = find_repo_root()?;
     let store = ClawStore::open(&root)?;
     let claw_dir = store.layout().claw_dir();
@@ -131,8 +227,9 @@ fn run_abort() -> anyhow::Result<()> {
 
     // Clean up conflict sidecars
     for conflict in &ms.conflicts {
-        let base_sidecar = root.join(format!("{}.BASE", conflict.file_path));
-        let right_sidecar = root.join(format!("{}.RIGHT", conflict.file_path));
+        let conflicted_path = root.join(&conflict.file_path);
+        let base_sidecar = conflict_writer::sidecar_path(&conflicted_path, "BASE");
+        let right_sidecar = conflict_writer::sidecar_path(&conflicted_path, "RIGHT");
         let _ = std::fs::remove_file(base_sidecar);
         let _ = std::fs::remove_file(right_sidecar);
     }
@@ -148,6 +245,21 @@ fn run_abort() -> anyhow::Result<()> {
 
     // Remove merge state
     merge_state::remove(&claw_dir)?;
+
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "schema_version": 1,
+                "action": "resolve.abort",
+                "aborted": true,
+                "restored_ref": ms.merge.left_ref,
+                "restored_revision": ms.merge.left_revision,
+                "conflict_count": ms.conflicts.len(),
+            }))?
+        );
+        return Ok(());
+    }
 
     println!(
         "Merge aborted. Working tree restored to {}.",
@@ -170,9 +282,8 @@ fn check_conflict_markers(path: &std::path::Path, codec_id: &str) -> bool {
         }
         "binary" => {
             // Binary conflicts use sidecars — check if sidecars exist
-            let base = format!("{}.BASE", path.display());
-            let right = format!("{}.RIGHT", path.display());
-            std::path::Path::new(&base).exists() || std::path::Path::new(&right).exists()
+            conflict_writer::sidecar_path(path, "BASE").exists()
+                || conflict_writer::sidecar_path(path, "RIGHT").exists()
         }
         _ => {
             // Text conflicts use <<<<<<< markers

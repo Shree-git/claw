@@ -20,7 +20,10 @@ that need stable field names instead of human text.
 
 ```json
 {
+  "schema_version": 1,
+  "action": "status",
   "branch": "main",
+  "head": null,
   "in_merge": false,
   "changes": [
     {

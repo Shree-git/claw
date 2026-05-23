@@ -21,6 +21,9 @@ Use this checklist for every tag release and hotfix.
 - [ ] GitHub artifact attestations exist for release artifacts and verify with `gh attestation verify`.
 - [ ] SBOM exists in SPDX or CycloneDX form and is attached to the release.
 - [ ] Checksums verify from a clean download.
+- [ ] `CLAW_RELEASE_VERIFY_REPORT=release-verification/<launch-tag>.json
+      scripts/verify-release-channel.sh <launch-tag>` produced a pass/fail
+      JSON report. Preserve failed reports when verification stops early.
 
 ## Install Verification
 
@@ -30,6 +33,13 @@ Use this checklist for every tag release and hotfix.
 - [ ] Homebrew formula installs the tagged release.
 - [ ] Windows MSI installs and adds `claw` to `PATH`.
 - [ ] Each verified install path passes `claw doctor`, `claw init`, and `claw status`.
+- [ ] For any release or production environment with an existing Claw repository,
+      archive a repository health JSON report with release evidence. Use either:
+
+      ```bash
+      CLAW_PREFLIGHT_HEALTH_REPO=<repo> CLAW_PREFLIGHT_HEALTH_REPORT=release-verification/repo-health.json scripts/public-launch-preflight.sh
+      CLAW_HEALTH_REPORT=release-verification/repo-health.json scripts/verify-repo-health.sh <repo>
+      ```
 
 ## Recommended Operator Checks (Not CI-Enforced)
 

@@ -168,10 +168,35 @@ impl<'a> GitExporter<'a> {
         if !path.exists() {
             // Git stores objects zlib-compressed
             let compressed = miniz_compress(data);
-            std::fs::write(&path, &compressed)?;
+            write_bytes_atomic(&path, &compressed)?;
         }
         Ok(())
     }
+}
+
+fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), GitExportError> {
+    let parent = path.parent().ok_or_else(|| {
+        GitExportError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("path has no parent: {}", path.display()),
+        ))
+    })?;
+    std::fs::create_dir_all(parent)?;
+
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    {
+        use std::io::Write;
+
+        let file = temp.as_file_mut();
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    temp.persist(path)
+        .map_err(|err| GitExportError::Io(err.error))?;
+    if let Ok(parent_dir) = std::fs::File::open(parent) {
+        parent_dir.sync_all()?;
+    }
+    Ok(())
 }
 
 /// Minimal zlib/deflate compression for git loose object storage.

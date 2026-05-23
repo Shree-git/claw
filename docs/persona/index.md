@@ -4,11 +4,14 @@ These pages route readers to the right docs for their job.
 
 | Reader | Start here |
 |---|---|
+| Beginner | [Beginner](beginner.md) |
 | New contributor | [Contributor](contributor.md) |
+| Agent developer | [Agent developer](agent-developer.md) |
 | Agent integrator | [Agent integrator](agent-integrator.md) |
 | Platform operator | [Platform operator](platform-operator.md) |
 | Security reviewer | [Security reviewer](security-reviewer.md) |
 | Git user | [Git user](git-user.md) |
+| VCS nerd cave | [VCS nerd cave](vcs-nerd-cave.md) |
 
 ## Shared docs
 
@@ -26,3 +29,5 @@ These pages route readers to the right docs for their job.
   pinned Claw version in your runner.
 - If you operate a daemon or sync endpoint, start with production install,
   compatibility, security, telemetry, backup, and rollback docs.
+- If you are validating Git/object edge cases, start with the VCS nerd cave and
+  record the exact tested cases for your repository shape.

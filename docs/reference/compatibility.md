@@ -29,9 +29,18 @@ This page defines the current compatibility baseline for operators running contr
   v0.1 decodes native v1 objects only, rejects future versions, and has the
   code hook future old-version migrators must use.
 - Sync `Hello` negotiates capabilities. Clients send their supported capability list; the daemon returns the supported intersection in daemon preference order. Empty client capabilities receive the compatibility baseline.
-- Supported sync capabilities currently include `partial-clone`, `event-bus`, and `request-limits`.
+- Supported daemon sync capabilities currently include `partial-clone`,
+  `event-bus`, and `request-limits`.
 - Primary transport is gRPC (`claw daemon` + `claw sync`).
-- Hosted HTTP transport is planned for ClawLab-style remote integration; do not assume a hosted service is live unless release notes say so.
+- Hosted HTTP transport is implemented as the ClawLab-style remote adapter, but
+  no public hosted service should be assumed live unless release notes say so.
+  Hosted remotes that advertise capabilities must include
+  `protocol:claw-sync/1` and `hosted-http`. Filtered fetches require the hosted
+  remote to advertise `partial-clone`. Policy-gated hosted pushes require
+  `policy-aware-push` and send the local policy receipt with the hosted ref
+  update request.
+- The hosted HTTP request contract is documented in
+  [Hosted Remote Protocol](hosted-remote-protocol.md).
 - Daemon HTTP schema artifact: `docs/reference/daemon-http-openapi-v1.json`.
 - Current daemon health listener HTTP surfaces include `/v1/health/live`, `/v1/health/ready`, `/v1/health/deps`, and `/v1/metrics` (Prometheus text payload).
 
@@ -45,7 +54,8 @@ This page defines the current compatibility baseline for operators running contr
 
 - Command examples in docs target the current `v0.1.x` CLI shape.
 - The current agent command surface is `keygen`, `register`, `rotate`,
-  `revoke`, `status`, and `list`. Public-key import through
+  `revoke`, `quarantine`, `unquarantine`, `audit`, `bulk`, `status`, and `list`.
+  Public-key import through
   `register --public-key` and `rotate --public-key` is part of the `v0.1.x`
   launch-hardening surface, but the exact on-disk agent registration schema is
   still pre-1.0.
@@ -54,6 +64,10 @@ This page defines the current compatibility baseline for operators running contr
 - `claw integrate` requires `--right`.
 - Policy enforcement requires the intent to reference the policy. Creating a
   policy object does not make it global.
+- `claw log --json` uses the v1 object envelope documented in
+  [CLI JSON Schemas](cli-json-schemas.md). Automation that consumed early
+  bare-array output must read the `entries` array and assert
+  `schema_version: 1` plus `action: "log"`.
 
 ## Object and protocol matrix
 

@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Security policy](https://img.shields.io/badge/security-policy-informational.svg)](SECURITY.md)
 
-**Intent-native, agent-native version control.**
+**Git records history. Claw records accountable intent.**
 
 > Status: v0.1 experimental. Claw VCS is suitable for local exploration, demos, and design feedback.
 > It is not yet recommended as the sole source of truth for production repositories.
@@ -110,9 +110,11 @@ crates/
 ├── claw-policy     Policy and visibility checks (package `claw-vcs-policy`)
 ├── claw-sync       gRPC sync with daemon fetch filters (package `claw-vcs-sync`)
 ├── claw-git        Git import/export (package `claw-vcs-git`)
+├── claw-agent-sdk  Rust SDK helpers for agent integrations (package `claw-vcs-agent-sdk`)
 └── claw            The `claw-vcs` Cargo package, publishing the `claw` binary
 
 proto/              Protocol Buffer definitions for all gRPC services
+sdk/                TypeScript and Python agent SDKs; Rust SDK lives in crates/claw-agent-sdk
 ```
 
 ### Object model
@@ -163,13 +165,26 @@ Built-in codecs:
 
 | Codec | ID | File types | Strategy |
 |-------|----|------------|----------|
-| **Text/Line** | `text/line` | `.txt`, `.md`, `.rs`, `.py`, ... | Line-based diff (similar to `diff`) |
+| **Text/Line** | `text/line` | `.txt`, `.md`, shell/C-family fallbacks | Line-based diff (similar to `diff`) |
+| **Rust/AST** | `rust/ast` | `.rs` | Top-level Rust item diff by function, struct, enum, trait, impl, module, type, const, or static |
+| **TypeScript/AST** | `typescript/ast` | `.ts`, `.tsx`, `.js`, `.jsx` | Declaration diff by function, class, interface, type, enum, or binding |
+| **Python/AST** | `python/ast` | `.py` | Top-level function/class diff |
+| **SQL/Migration** | `sql/migration` | `.sql` | Statement-level migration diff keyed by table/index/action |
+| **Protobuf/AST** | `protobuf/ast` | `.proto` | Message, enum, service, RPC, option, import, and syntax diff |
+| **Terraform/Tree** | `terraform/tree` | `.tf`, `.tfvars` | Top-level HCL block diff by resource/module/variable/output/provider |
 | **JSON/Tree** | `json/tree` | `.json` | Structural tree diff (keys, not lines) |
+| **TOML/Tree** | `toml/tree` | `.toml` | Structural config diff over parsed TOML values |
+| **YAML/Tree** | `yaml/tree` | `.yaml`, `.yml` | Structural manifest diff over parsed YAML values |
+| **OpenAPI/Tree** | `openapi/tree` | `openapi.*`, `swagger.*` | Structural spec diff for JSON or YAML API descriptions |
+| **Kubernetes/Tree** | `kubernetes/tree` | `k8s/`, `kubernetes/`, `manifests/` YAML/JSON | Structural manifest diff for Kubernetes resources |
+| **Notebook/Tree** | `notebook/tree` | `.ipynb` | Structural notebook JSON diff |
 | **Binary** | `binary` | Everything else | Full-blob replacement |
 
 The `commute` operation enables Darcs-style patch reordering — if two patches touch independent parts of a file, they can be applied in either order without conflict.
 
-The architecture supports adding codecs for YAML, TOML, SQL migrations, Protobuf schemas — anything where structural understanding beats line-by-line diff.
+The source and infrastructure codecs intentionally emit canonical output when
+applying tree operations; preserve original formatting with normal source
+formatters after semantic merges.
 
 ### Sync protocol
 
@@ -196,14 +211,22 @@ fetches:
 - **Capsule visibility** — respect public/private/encrypted-metadata-required policy modes
 - **Byte budget / depth limit** — resource-constrained fetching
 
-Current CLI limitation: `claw sync clone` still performs a full clone and does
-not expose these filters.
+`claw sync pull` and `claw sync clone` expose these filters with `--intent`,
+`--path-prefix`, `--time-start-ms`, `--time-end-ms`, `--codec`,
+`--visibility`, `--depth`, and `--bytes`.
 
 ### Daemon
 
 `claw daemon` (or `claw serve`) runs a long-lived gRPC server exposing services for intents, changes, capsules, workstreams, events, and sync. Agents connect programmatically — create intents, submit changes, stream events in real-time. Git has no equivalent.
 
-For production profile runs, non-local daemon binds require authentication and TLS by default. Daemon auth can be configured with `--auth-token` (explicit bearer token) or `--auth-profile` (reuse token from `claw auth` profile).
+For production profile runs, non-local daemon binds require authentication and TLS by default. Prefer `--auth-profile` (reuse a token from `claw auth`) or `--auth-token-stdin` so bearer tokens do not appear in shell history or process arguments. `--auth-token` remains available for local ad hoc testing.
+
+### Agent SDKs and MCP
+
+Agents can use the CLI directly, the Rust `claw-vcs-agent-sdk` crate, the
+TypeScript and Python SDKs under `sdk/`, or `claw mcp serve` for a local MCP
+tool server. The MCP server defaults to read-only tools and requires
+`--allow-write` before exposing intent/change creation.
 
 ### Cryptography
 
@@ -238,9 +261,11 @@ claw auth <subcommand>       Manage auth profiles and tokens for explicit remote
 claw sync <remote>           Pull from a remote (shorthand)
 claw sync <subcommand>       Push, pull, or clone
 claw daemon                  Run the gRPC sync server
+claw mcp serve               Run the local MCP stdio server for agents
 claw patch <subcommand>      Create and apply patches directly
 claw git-export              Export to Git format (supports --all-heads, --git-notes)
 claw git-import              Import from Git format (supports --all-branches, --read-notes)
+claw migration <subcommand>  Import Git team workflows into intents, changes, metadata, and policy suggestions
 claw git-roundtrip           Verify claw -> git -> claw integrity for a ref
 ```
 
@@ -255,7 +280,7 @@ claw git-roundtrip           Verify claw -> git -> claw integrity for a ref
 | Distinguish human from AI agent | Freeform author string | Registered agent identities with Ed25519 keys |
 | Enforce policies in the repo | GitHub/GitLab settings (external) | Policy objects versioned alongside code |
 | Codec-aware merging | Line-based diff only | Pluggable codecs (JSON tree diff, etc.) |
-| Daemon fetch filters by intent/time/codec | Treeless/blobless only | Daemon object fetch can filter by intent, path, time, codec, visibility, and byte budget; CLI clone currently fetches all refs/objects |
+| Daemon fetch filters by intent/time/codec | Treeless/blobless only | Daemon object fetch and CLI pull/clone can filter by intent, path, time, codec, visibility, depth, and byte budget |
 | Agent-native daemon | None | gRPC server for programmatic agent access |
 | Patch commutation | N/A | Darcs-style independent patch reordering |
 | Capsule encryption | N/A | XChaCha20-Poly1305 encrypted private metadata |

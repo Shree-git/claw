@@ -69,6 +69,7 @@ pub fn run(args: CheckoutArgs) -> anyhow::Result<()> {
             .ok_or_else(|| anyhow::anyhow!("revision has no tree"))?,
         _ => anyhow::bail!("target is not a revision"),
     };
+    let files_written = worktree::collect_tracked_paths(&store, &target_tree, "")?.len();
 
     if !args.force {
         // Check for uncommitted changes: compare worktree to current HEAD's tree
@@ -99,13 +100,19 @@ pub fn run(args: CheckoutArgs) -> anyhow::Result<()> {
 
     if args.dry_run {
         let target = checkout_target_label(&new_head_state);
+        let detached = matches!(new_head_state, HeadState::Detached { .. });
         if args.json {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
+                    "schema_version": 1,
+                    "action": "checkout",
                     "target": target,
-                    "target_id": target_id.to_hex(),
+                    "target_id": target_id.to_string(),
                     "dry_run": true,
+                    "checked_out": false,
+                    "detached": detached,
+                    "files_written": 0,
                     "updated": false,
                 }))?
             );
@@ -143,13 +150,19 @@ pub fn run(args: CheckoutArgs) -> anyhow::Result<()> {
     store.write_head(&new_head_state)?;
 
     let target = checkout_target_label(&new_head_state);
+    let detached = matches!(new_head_state, HeadState::Detached { .. });
     if args.json {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": 1,
+                "action": "checkout",
                 "target": target,
-                "target_id": target_id.to_hex(),
+                "target_id": target_id.to_string(),
                 "dry_run": false,
+                "checked_out": true,
+                "detached": detached,
+                "files_written": files_written,
                 "updated": true,
             }))?
         );

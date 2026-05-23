@@ -7,6 +7,7 @@ Import Git objects and refs into Claw.
 ```bash
 claw git-import --git-dir /path/to/repo/.git --all-branches
 claw git-import --git-dir /path/to/repo/.git --all-branches --dry-run
+claw git-import --json --git-dir /path/to/repo/.git --all-branches --dry-run
 claw git-roundtrip
 ```
 
@@ -16,14 +17,16 @@ Review migration docs for unsupported or lossy Git features before using importe
 
 ## JSON Output
 
-`claw git-import` does not currently emit command-specific success JSON. Use
-global JSON errors for automation failures:
+`--json` emits `schema_version: 1`, `action: "git-import"`, `dry_run`, `git_dir`,
+`import_count`, and an `imports` array. Each import row includes `git_ref`,
+`git_commit`, `claw_ref`, and `revision_id`. Dry-run rows set `revision_id` to
+`null` because no Claw objects or refs are written.
+
+Use global JSON errors for automation failures:
 
 ```bash
-claw --error-format json git-import --git-dir /path/to/repo/.git --all-branches --dry-run
+claw --error-format json git-import --json --git-dir /path/to/repo/.git --all-branches --dry-run
 ```
-
-Dry-run output is human-readable and names each planned Git-to-Claw ref import.
 
 ## Exit Codes
 

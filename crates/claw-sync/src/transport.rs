@@ -2,8 +2,11 @@ use async_trait::async_trait;
 
 use claw_core::id::ObjectId;
 use claw_store::ClawStore;
+use serde::{Deserialize, Serialize};
 
-use crate::proto::sync::{HelloResponse, PushObjectsResponse, UpdateRefsResponse};
+use crate::proto::sync::{
+    HelloResponse, PartialCloneFilter, PushObjectsResponse, UpdateRefsResponse,
+};
 use crate::security::redacted_secret_marker;
 use crate::SyncError;
 
@@ -47,6 +50,41 @@ pub enum RemoteTransportConfig {
         repo: String,
         bearer_token: Option<String>,
     },
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RefUpdateContext {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub policies: Vec<RefUpdatePolicyCheck>,
+    #[serde(
+        rename = "requestedCapabilities",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub requested_capabilities: Vec<String>,
+    #[serde(
+        rename = "negotiatedCapabilities",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub negotiated_capabilities: Vec<String>,
+}
+
+impl RefUpdateContext {
+    pub fn has_policy_checks(&self) -> bool {
+        !self.policies.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RefUpdatePolicyCheck {
+    pub id: String,
+    #[serde(rename = "ref")]
+    pub ref_name: String,
+    pub object: String,
+    pub allowed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 impl std::fmt::Debug for RemoteTransportConfig {
@@ -93,6 +131,7 @@ pub trait SyncTransport: Send {
         store: &ClawStore,
         want: &[ObjectId],
         have: &[ObjectId],
+        filter: Option<PartialCloneFilter>,
     ) -> Result<Vec<ObjectId>, SyncError>;
 
     async fn update_refs(
@@ -100,6 +139,15 @@ pub trait SyncTransport: Send {
         updates: &[(String, Option<ObjectId>, ObjectId)],
         force: bool,
     ) -> Result<UpdateRefsResponse, SyncError>;
+
+    async fn update_refs_with_context(
+        &mut self,
+        updates: &[(String, Option<ObjectId>, ObjectId)],
+        force: bool,
+        _context: Option<RefUpdateContext>,
+    ) -> Result<UpdateRefsResponse, SyncError> {
+        self.update_refs(updates, force).await
+    }
 
     async fn push_objects(
         &mut self,

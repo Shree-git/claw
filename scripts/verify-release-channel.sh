@@ -17,7 +17,7 @@ PowerShell installer and MSI checks run in .github/workflows/release-channel-smo
 Environment:
   CLAW_RELEASE_REPO              GitHub repo to verify (default: Shree-git/claw-vcs)
   CLAW_RELEASE_VERIFY_WORKDIR    Existing work directory to reuse
-  CLAW_RELEASE_VERIFY_REPORT     Optional JSON report path to write on success
+  CLAW_RELEASE_VERIFY_REPORT     Optional JSON report path to write on pass/fail
   CLAW_SKIP_CARGO_INSTALL=1      Skip the cargo install --git check
   CLAW_KEEP_RELEASE_VERIFY=1     Keep the temporary work directory
 
@@ -39,8 +39,9 @@ fi
 
 repo="${CLAW_RELEASE_REPO:-Shree-git/claw-vcs}"
 workdir="${CLAW_RELEASE_VERIFY_WORKDIR:-$(mktemp -d)}"
+cleanup_workdir=0
 if [[ "${CLAW_KEEP_RELEASE_VERIFY:-0}" != "1" && -z "${CLAW_RELEASE_VERIFY_WORKDIR:-}" ]]; then
-  trap 'rm -rf "$workdir"' EXIT
+  cleanup_workdir=1
 fi
 
 require() {
@@ -50,28 +51,13 @@ require() {
   fi
 }
 
-require gh
-require jq
-require cosign
-require git
-require tar
-require shasum
-
 expected_version="${tag#v}"
 sbom="claw-${tag}.sbom.spdx.json"
 metadata="claw-${tag}.release-metadata.json"
 report_path="${CLAW_RELEASE_VERIFY_REPORT:-}"
-
-case "$(uname -s):$(uname -m)" in
-  Darwin:arm64) archive="claw-vcs-aarch64-apple-darwin.tar.xz" ;;
-  Darwin:x86_64) archive="claw-vcs-x86_64-apple-darwin.tar.xz" ;;
-  Linux:x86_64) archive="claw-vcs-x86_64-unknown-linux-gnu.tar.xz" ;;
-  Linux:aarch64 | Linux:arm64) archive="claw-vcs-aarch64-unknown-linux-gnu.tar.xz" ;;
-  *)
-    echo "unsupported host for archive verification: $(uname -s) $(uname -m)" >&2
-    exit 2
-    ;;
-esac
+report_written=0
+failure_command=""
+failure_line=""
 
 assets="$workdir/assets"
 archive_dir="$workdir/archive"
@@ -102,6 +88,8 @@ record_check() {
 }
 
 write_report() {
+  local exit_status="${1:-0}"
+
   if [[ -z "$report_path" ]]; then
     return 0
   fi
@@ -115,9 +103,17 @@ write_report() {
     --arg expectedVersion "$expected_version" \
     --arg releaseTarget "${release_target:-}" \
     --arg tagCommit "${tag_commit:-}" \
+    --arg exitStatus "$exit_status" \
+    --arg failureCommand "$failure_command" \
+    --arg failureLine "$failure_line" \
     '{
       schemaVersion: 1,
+      action: "release_channel.verify",
       generatedAt: now | todateiso8601,
+      ok: ($exitStatus == "0"),
+      exitStatus: ($exitStatus | tonumber),
+      failureCommand: (if $failureCommand == "" then null else $failureCommand end),
+      failureLine: (if $failureLine == "" then null else ($failureLine | tonumber) end),
       repo: $repo,
       tag: $tag,
       os: $os,
@@ -128,6 +124,54 @@ write_report() {
       checks: .
     }' "$report_checks" > "$report_path"
 }
+
+capture_failure() {
+  local command="$1"
+  local line="$2"
+
+  if [[ -z "$failure_command" ]]; then
+    failure_command="$command"
+    failure_line="$line"
+  fi
+}
+
+finish() {
+  local status=$?
+
+  if [[ "$report_written" != "1" && -n "$report_path" ]]; then
+    write_report "$status" || true
+    if [[ "$status" -ne 0 && -f "$report_path" ]]; then
+      echo "Wrote failed release-channel verification report: $report_path" >&2
+    fi
+  fi
+
+  if [[ "$cleanup_workdir" == "1" ]]; then
+    rm -rf "$workdir"
+  fi
+
+  exit "$status"
+}
+
+trap 'capture_failure "$BASH_COMMAND" "$LINENO"' ERR
+trap finish EXIT
+
+require gh
+require jq
+require cosign
+require git
+require tar
+require shasum
+
+case "$(uname -s):$(uname -m)" in
+  Darwin:arm64) archive="claw-vcs-aarch64-apple-darwin.tar.xz" ;;
+  Darwin:x86_64) archive="claw-vcs-x86_64-apple-darwin.tar.xz" ;;
+  Linux:x86_64) archive="claw-vcs-x86_64-unknown-linux-gnu.tar.xz" ;;
+  Linux:aarch64 | Linux:arm64) archive="claw-vcs-aarch64-unknown-linux-gnu.tar.xz" ;;
+  *)
+    echo "unsupported host for archive verification: $(uname -s) $(uname -m)" >&2
+    exit 2
+    ;;
+esac
 
 echo "Verifying $repo release $tag in $workdir"
 
@@ -412,7 +456,8 @@ else
   record_check "homebrew" "binary-smoke" "skipped" '{"reason":"CLAW_VERIFY_HOMEBREW not enabled or host is not Darwin"}'
 fi
 
-write_report
+write_report 0
+report_written=1
 echo "Release-channel verification passed for $repo $tag"
 if [[ -n "$report_path" ]]; then
   echo "Wrote release-channel verification report: $report_path"

@@ -26,17 +26,26 @@ For machine-readable diagnostics, run commands with:
 claw --error-format json <command>
 ```
 
+Human runtime diagnostics include the same `req_<milliseconds>_<counter>`
+request ID as a `request_id: req_...` line so operators can correlate terminal
+output with support logs.
+
 Example envelope:
 
 ```json
 {
+  "schema_version": 1,
   "code": "NOT_REPOSITORY",
   "message": "not in a claw repository (no .claw directory found)",
-  "request_id": "req_1710000000000",
+  "reason": "Claw could not find a `.claw` directory in this path or any parent path.",
+  "request_id": "req_1710000000000_0",
   "remediation": "Run `claw init` in this directory, or `cd` into an existing Claw repository.",
   "exit_code": 3,
   "details": null
 }
 ```
 
-Policy denials use `POLICY_DENIED`. Compatibility failures use `COMPATIBILITY_ERROR`.
+Policy denials use `POLICY_DENIED`. Compatibility failures use
+`COMPATIBILITY_ERROR`. Ref validation failures use `INVALID_REF_NAME` when the
+requested ref is not portable, and `REF_NAME_COLLISION` when it differs from an
+existing ref only by case. Those ref diagnostics currently exit with code `1`.

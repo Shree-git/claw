@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use claw_store::StoreError;
+
 pub mod exit_codes {
     #[allow(dead_code)]
     pub const OK: i32 = 0;
@@ -19,8 +21,10 @@ pub mod exit_codes {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CliDiagnostic {
+    pub schema_version: u8,
     pub code: &'static str,
     pub message: String,
+    pub reason: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remediation: Option<&'static str>,
     pub exit_code: i32,
@@ -30,8 +34,10 @@ pub struct CliDiagnostic {
 impl CliDiagnostic {
     pub fn from_usage_error(message: String, kind: clap::error::ErrorKind) -> Self {
         Self {
+            schema_version: 1,
             code: "USAGE_ERROR",
             message,
+            reason: "The command line did not match a supported Claw command or option shape.",
             remediation: Some("Run `claw --help` or `claw <command> --help` for usage."),
             exit_code: exit_codes::USAGE,
             details: serde_json::json!({
@@ -53,7 +59,39 @@ impl CliDiagnostic {
             .chain()
             .any(|cause| cause.is::<crate::config::NotRepositoryError>());
 
-        let (code, exit_code, remediation) = if is_not_repository
+        let mut details = serde_json::Value::Null;
+        let store_error = err
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<StoreError>());
+
+        let (code, exit_code, reason, remediation) = if let Some(StoreError::RefNameCollision {
+            requested,
+            existing,
+        }) = store_error
+        {
+            details = serde_json::json!({
+                "requested": requested,
+                "existing": existing,
+            });
+            (
+                "REF_NAME_COLLISION",
+                exit_codes::GENERAL,
+                "The ref name collides with an existing ref on case-insensitive filesystems.",
+                Some(
+                    "Choose a ref or branch name that differs by more than letter case, then retry.",
+                ),
+            )
+        } else if let Some(StoreError::InvalidRefName(ref_name)) = store_error {
+            details = serde_json::json!({
+                "ref_name": ref_name,
+            });
+            (
+                "INVALID_REF_NAME",
+                exit_codes::GENERAL,
+                "The ref name is not portable or would escape Claw's ref storage directory.",
+                Some("Use a relative ref such as `heads/main` without `.`/`..`, backslashes, reserved Windows names, trailing spaces/dots, or path metacharacters."),
+            )
+        } else if is_not_repository
             || text.contains("not in a claw repository")
             || text.contains("not a claw repository")
             || text.contains("no .claw directory found")
@@ -61,6 +99,7 @@ impl CliDiagnostic {
             (
                 "NOT_REPOSITORY",
                 exit_codes::NOT_REPOSITORY,
+                "Claw could not find a `.claw` directory in this path or any parent path.",
                 Some(
                     "Run `claw init` in this directory, or `cd` into an existing Claw repository.",
                 ),
@@ -69,6 +108,7 @@ impl CliDiagnostic {
             (
                     "CONFIG_ERROR",
                     exit_codes::CONFIG,
+                    "Repository configuration could not be loaded or is not compatible with this CLI.",
                     Some("Run `claw doctor` to inspect repository configuration, then fix the reported file."),
                 )
         } else if text.contains("no token found")
@@ -81,12 +121,14 @@ impl CliDiagnostic {
             (
                     "AUTH_ERROR",
                     exit_codes::AUTH,
-                    Some("Run `claw auth login --profile default`, or set a token with `claw auth token set`."),
+                    "The remote operation needs an authentication token, but the current profile could not provide one.",
+                    Some("Run `claw auth login --profile default`, or import a token with `claw auth token set --stdin`."),
                 )
         } else if text.contains("policy") {
             (
                 "POLICY_DENIED",
                 exit_codes::POLICY,
+                "A referenced policy rejected the revision, capsule, evidence, or signer set.",
                 Some("Review the policy requirements, add the required evidence/signatures, or run `claw policy eval --json` for details."),
             )
         } else if text.contains("compatibility check failed")
@@ -98,57 +140,67 @@ impl CliDiagnostic {
             (
                 "COMPATIBILITY_ERROR",
                 exit_codes::COMPATIBILITY,
+                "The CLI and remote daemon did not agree on a supported protocol or version window.",
                 Some("Use a compatible CLI/daemon version or rerun with `--no-compat-check` only after verifying the risk."),
             )
         } else if text.contains("remote") {
             (
                     "REMOTE_ERROR",
                     exit_codes::REMOTE,
+                    "The requested remote was missing, unreachable, or returned an operation failure.",
                     Some("Run `claw remote list` to inspect configured remotes, or add one with `claw remote add`."),
                 )
         } else if text.contains("uncommitted changes") {
             (
                     "WORKTREE_DIRTY",
                     exit_codes::WORKTREE_DIRTY,
+                    "The command would overwrite or integrate over local worktree changes.",
                     Some("Run `claw status`, snapshot your work with `claw snapshot -m <message>`, or retry with `--force` when appropriate."),
                 )
         } else if text.contains("conflict") || text.contains("merge in progress") {
             (
                     "CONFLICT_STATE",
                     exit_codes::CONFLICT,
+                    "A merge or integration conflict is still open in this repository.",
                     Some("Run `claw resolve` to inspect conflicts, then `claw snapshot -m <message>` after resolving them."),
                 )
         } else if text.contains("io error") || text.contains("permission denied") {
             (
                 "IO_ERROR",
                 exit_codes::IO,
-                Some("Check filesystem permissions and that the target path is accessible."),
+                "The operating system rejected a file, directory, or process operation.",
+                Some("Run `claw doctor`, then check filesystem permissions and that the target path is accessible."),
             )
         } else {
             (
                     "CLI_ERROR",
                     exit_codes::GENERAL,
+                    "Claw hit an unclassified runtime error.",
                     Some("Run the command again with `--help`, or run `claw doctor` for local repository checks."),
                 )
         };
 
         Self {
+            schema_version: 1,
             code,
             message,
+            reason,
             remediation,
             exit_code,
-            details: serde_json::Value::Null,
+            details,
         }
     }
 
-    pub fn print_human(&self) {
+    pub fn print_human(&self, request_id: &str) {
         eprintln!(
             "error[{code}]: {message}",
             code = self.code,
             message = self.message
         );
+        eprintln!("request_id: {request_id}");
+        eprintln!("why: {}", self.reason);
         if let Some(remediation) = self.remediation {
-            eprintln!("hint: {remediation}");
+            eprintln!("try: {remediation}");
         }
     }
 }
@@ -193,7 +245,37 @@ mod tests {
 
             assert_eq!(diagnostic.code, "AUTH_ERROR");
             assert_eq!(diagnostic.exit_code, exit_codes::AUTH);
+            assert!(diagnostic
+                .remediation
+                .expect("auth remediation")
+                .contains("claw auth token set --stdin"));
         }
+    }
+
+    #[test]
+    fn classifies_invalid_ref_names() {
+        let err = anyhow::Error::new(claw_store::StoreError::InvalidRefName(
+            "heads/CON".to_string(),
+        ));
+        let diagnostic = CliDiagnostic::from_error(&err);
+
+        assert_eq!(diagnostic.code, "INVALID_REF_NAME");
+        assert_eq!(diagnostic.exit_code, exit_codes::GENERAL);
+        assert_eq!(diagnostic.details["ref_name"], "heads/CON");
+    }
+
+    #[test]
+    fn classifies_ref_name_collisions() {
+        let err = anyhow::Error::new(claw_store::StoreError::RefNameCollision {
+            requested: "heads/MAIN".to_string(),
+            existing: "heads/main".to_string(),
+        });
+        let diagnostic = CliDiagnostic::from_error(&err);
+
+        assert_eq!(diagnostic.code, "REF_NAME_COLLISION");
+        assert_eq!(diagnostic.exit_code, exit_codes::GENERAL);
+        assert_eq!(diagnostic.details["requested"], "heads/MAIN");
+        assert_eq!(diagnostic.details["existing"], "heads/main");
     }
 
     #[test]

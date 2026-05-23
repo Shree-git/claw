@@ -9,8 +9,13 @@ use claw_store::ClawStore;
 use super::git_notes::{write_note, GitProvenanceNote};
 use crate::config::find_repo_root;
 
+const GIT_EXPORT_JSON_SCHEMA_VERSION: u8 = 1;
+
 #[derive(Args)]
 pub struct GitExportArgs {
+    /// Output command results as JSON
+    #[arg(long, global = true)]
+    json: bool,
     /// Ref to export (default: heads/main)
     #[arg(long, name = "ref", default_value = "heads/main")]
     ref_name: String,
@@ -67,6 +72,7 @@ pub fn run(args: GitExportArgs) -> anyhow::Result<()> {
     let git_dir = root.join(&args.git_dir);
     let git_objects_dir = git_dir.join("objects");
     let mut exporter = GitExporter::new(&store);
+    let mut exports = Vec::new();
 
     if args.all_heads {
         validate_git_branch_prefix(&args.branch_prefix)?;
@@ -89,15 +95,25 @@ pub fn run(args: GitExportArgs) -> anyhow::Result<()> {
                 } else {
                     0
                 };
-                println!(
-                    "Dry run: would export {} -> refs/heads/{} ({} revision object(s))",
-                    ref_name, branch_name, revision_count
-                );
-                if args.git_notes {
+                exports.push(serde_json::json!({
+                    "source_ref": ref_name,
+                    "revision_id": rev_id.to_hex(),
+                    "git_branch": branch_name,
+                    "revision_count": revision_count,
+                    "git_commit": null,
+                    "note_count": note_count,
+                }));
+                if !args.json {
                     println!(
-                        "  Would write {note_count} provenance note(s) to refs/notes/{}",
-                        args.notes_ref
+                        "Dry run: would export {} -> refs/heads/{} ({} revision object(s))",
+                        ref_name, branch_name, revision_count
                     );
+                    if args.git_notes {
+                        println!(
+                            "  Would write {note_count} provenance note(s) to refs/notes/{}",
+                            args.notes_ref
+                        );
+                    }
                 }
                 exported += 1;
                 continue;
@@ -106,7 +122,7 @@ pub fn run(args: GitExportArgs) -> anyhow::Result<()> {
             let sha1 = exporter.export(&rev_id, &git_objects_dir)?;
             write_git_branch_ref(&git_dir, &branch_name, &sha1)?;
             write_change_refs(&store, &exporter, &rev_id, &git_dir)?;
-            if args.git_notes {
+            let note_count = if args.git_notes {
                 let written = write_git_provenance_notes(
                     &store,
                     &exporter,
@@ -114,23 +130,47 @@ pub fn run(args: GitExportArgs) -> anyhow::Result<()> {
                     &git_dir,
                     &args.notes_ref,
                 )?;
-                if written > 0 {
+                if written > 0 && !args.json {
                     println!(
                         "  wrote {written} provenance note(s) to refs/notes/{}",
                         args.notes_ref
                     );
                 }
-            }
+                written
+            } else {
+                0
+            };
 
-            println!(
-                "Exported {} -> refs/heads/{} ({})",
-                ref_name,
-                branch_name,
-                hex::encode(sha1)
-            );
+            let git_commit = hex::encode(sha1);
+            exports.push(serde_json::json!({
+                "source_ref": ref_name,
+                "revision_id": rev_id.to_hex(),
+                "git_branch": branch_name,
+                "revision_count": collect_revision_ids(&store, &rev_id)?.len(),
+                "git_commit": git_commit,
+                "note_count": note_count,
+            }));
+            if !args.json {
+                println!(
+                    "Exported {} -> refs/heads/{} ({})",
+                    ref_name, branch_name, git_commit
+                );
+            }
             exported += 1;
         }
-        if args.dry_run {
+        if args.json {
+            print_json(serde_json::json!({
+                "schema_version": GIT_EXPORT_JSON_SCHEMA_VERSION,
+                "action": "git-export",
+                "dry_run": args.dry_run,
+                "git_dir": git_dir.display().to_string(),
+                "all_heads": true,
+                "export_count": exported,
+                "git_notes": args.git_notes,
+                "notes_ref": if args.git_notes { Some(args.notes_ref.as_str()) } else { None },
+                "exports": exports,
+            }))?;
+        } else if args.dry_run {
             println!("Dry run: would export {exported} branch(es) to git.");
         } else {
             println!("Exported {exported} branch(es) to git.");
@@ -147,18 +187,39 @@ pub fn run(args: GitExportArgs) -> anyhow::Result<()> {
             } else {
                 0
             };
-            println!(
-                "Dry run: would export {} -> refs/heads/{} ({} revision object(s))",
-                args.ref_name, args.branch, revision_count
-            );
-            if args.git_notes {
+            if args.json {
+                print_json(serde_json::json!({
+                    "schema_version": GIT_EXPORT_JSON_SCHEMA_VERSION,
+                    "action": "git-export",
+                    "dry_run": true,
+                    "git_dir": git_dir.display().to_string(),
+                    "all_heads": false,
+                    "export_count": 1,
+                    "git_notes": args.git_notes,
+                    "notes_ref": if args.git_notes { Some(args.notes_ref.as_str()) } else { None },
+                    "exports": [{
+                        "source_ref": args.ref_name,
+                        "revision_id": rev_id.to_hex(),
+                        "git_branch": args.branch,
+                        "revision_count": revision_count,
+                        "git_commit": null,
+                        "note_count": note_count,
+                    }],
+                }))?;
+            } else {
                 println!(
-                    "  Would write {note_count} provenance note(s) to refs/notes/{}",
-                    args.notes_ref
+                    "Dry run: would export {} -> refs/heads/{} ({} revision object(s))",
+                    args.ref_name, args.branch, revision_count
                 );
+                if args.git_notes {
+                    println!(
+                        "  Would write {note_count} provenance note(s) to refs/notes/{}",
+                        args.notes_ref
+                    );
+                }
+                println!("  Git object writes skipped.");
+                println!("  Git ref writes skipped.");
             }
-            println!("  Git object writes skipped.");
-            println!("  Git ref writes skipped.");
             return Ok(());
         }
 
@@ -166,21 +227,51 @@ pub fn run(args: GitExportArgs) -> anyhow::Result<()> {
 
         write_git_branch_ref(&git_dir, &args.branch, &head_sha1)?;
         write_change_refs(&store, &exporter, &rev_id, &git_dir)?;
-        if args.git_notes {
+        let note_count = if args.git_notes {
             let written =
                 write_git_provenance_notes(&store, &exporter, &rev_id, &git_dir, &args.notes_ref)?;
-            if written > 0 {
+            if written > 0 && !args.json {
                 println!(
                     "  wrote {written} provenance note(s) to refs/notes/{}",
                     args.notes_ref
                 );
             }
-        }
+            written
+        } else {
+            0
+        };
 
-        println!("Exported to git: refs/heads/{}", args.branch);
-        println!("  SHA-1: {}", hex::encode(head_sha1));
+        let git_commit = hex::encode(head_sha1);
+        if args.json {
+            print_json(serde_json::json!({
+                "schema_version": GIT_EXPORT_JSON_SCHEMA_VERSION,
+                "action": "git-export",
+                "dry_run": false,
+                "git_dir": git_dir.display().to_string(),
+                "all_heads": false,
+                "export_count": 1,
+                "git_notes": args.git_notes,
+                "notes_ref": if args.git_notes { Some(args.notes_ref.as_str()) } else { None },
+                "exports": [{
+                    "source_ref": args.ref_name,
+                    "revision_id": rev_id.to_hex(),
+                    "git_branch": args.branch,
+                    "revision_count": collect_revision_ids(&store, &rev_id)?.len(),
+                    "git_commit": git_commit,
+                    "note_count": note_count,
+                }],
+            }))?;
+        } else {
+            println!("Exported to git: refs/heads/{}", args.branch);
+            println!("  SHA-1: {git_commit}");
+        }
     }
 
+    Ok(())
+}
+
+fn print_json(value: serde_json::Value) -> anyhow::Result<()> {
+    println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
 }
 
@@ -206,10 +297,7 @@ fn write_git_branch_ref(
     let refs_dir = git_dir.join("refs").join("heads");
     std::fs::create_dir_all(&refs_dir)?;
     let branch_path = refs_dir.join(branch);
-    if let Some(parent) = branch_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(branch_path, format!("{}\n", hex::encode(sha1)))?;
+    write_bytes_atomic(&branch_path, format!("{}\n", hex::encode(sha1)).as_bytes())?;
     Ok(())
 }
 
@@ -237,14 +325,35 @@ fn write_change_refs(
         if let Ok(Object::Revision(ref rev)) = store.load_object(&id) {
             if let (Some(change_id), Some(sha1)) = (rev.change_id.as_ref(), exporter.get_sha1(&id))
             {
-                std::fs::write(
-                    refs_dir.join(change_id.to_string()),
-                    format!("{}\n", hex::encode(sha1)),
+                write_bytes_atomic(
+                    &refs_dir.join(change_id.to_string()),
+                    format!("{}\n", hex::encode(sha1)).as_bytes(),
                 )?;
             }
         }
     }
 
+    Ok(())
+}
+
+fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("path has no parent: {}", path.display()))?;
+    std::fs::create_dir_all(parent)?;
+
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    {
+        use std::io::Write;
+
+        let file = temp.as_file_mut();
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    temp.persist(path).map_err(|err| err.error)?;
+    if let Ok(parent_dir) = std::fs::File::open(parent) {
+        parent_dir.sync_all()?;
+    }
     Ok(())
 }
 
@@ -306,6 +415,14 @@ mod tests {
     fn parses_dry_run_flag() {
         let cli = TestCli::parse_from(["claw", "--dry-run"]);
 
+        assert!(cli.args.dry_run);
+    }
+
+    #[test]
+    fn parses_json_after_subcommand() {
+        let cli = TestCli::parse_from(["claw", "--json", "--dry-run"]);
+
+        assert!(cli.args.json);
         assert!(cli.args.dry_run);
     }
 

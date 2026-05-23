@@ -9,6 +9,9 @@ use tokio::time::{timeout, Duration};
 
 #[derive(Debug, Args)]
 pub struct PluginArgs {
+    /// Emit machine-readable JSON output
+    #[arg(long)]
+    json: bool,
     #[command(subcommand)]
     command: PluginCommand,
 }
@@ -43,11 +46,11 @@ enum InitializeResponse {
 
 pub async fn run(args: PluginArgs) -> anyhow::Result<()> {
     match args.command {
-        PluginCommand::Check(args) => run_check(args).await,
+        PluginCommand::Check(check_args) => run_check(check_args, args.json).await,
     }
 }
 
-async fn run_check(args: CheckArgs) -> anyhow::Result<()> {
+async fn run_check(args: CheckArgs, json_output: bool) -> anyhow::Result<()> {
     let request_id = "init-1";
     let request_line = json!({
         "jsonrpc": "1.0",
@@ -115,6 +118,13 @@ async fn run_check(args: CheckArgs) -> anyhow::Result<()> {
 
     match validate_initialize_response(response_line.trim(), request_id)? {
         InitializeResponse::Success => {
+            if json_output {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&plugin_check_receipt(&args, request_id, true))?
+                );
+                return Ok(());
+            }
             println!(
                 "Plugin check passed: {} (protocol {})",
                 display_plugin_path(&args.plugin),
@@ -137,6 +147,20 @@ async fn run_check(args: CheckArgs) -> anyhow::Result<()> {
             );
         }
     }
+}
+
+fn plugin_check_receipt(args: &CheckArgs, request_id: &str, ok: bool) -> Value {
+    json!({
+        "schema_version": 1,
+        "action": "plugin.check",
+        "ok": ok,
+        "plugin": display_plugin_path(&args.plugin),
+        "protocol": args.protocol,
+        "timeout_ms": args.timeout_ms,
+        "request_id": request_id,
+        "jsonrpc": "1.0",
+        "method": "plugin.initialize",
+    })
 }
 
 fn display_plugin_path(path: &Path) -> String {
@@ -251,6 +275,7 @@ mod tests {
         let cli = TestCli::parse_from(["claw", "plugin", "check", "--plugin", "/tmp/plugin"]);
 
         let TestCommand::Plugin(plugin_args) = cli.command;
+        assert!(!plugin_args.json);
         match plugin_args.command {
             PluginCommand::Check(args) => {
                 assert_eq!(args.protocol, 1);
@@ -265,6 +290,7 @@ mod tests {
         let cli = TestCli::parse_from([
             "claw",
             "plugin",
+            "--json",
             "check",
             "--plugin",
             "./bin/example-plugin",
@@ -275,6 +301,7 @@ mod tests {
         ]);
 
         let TestCommand::Plugin(plugin_args) = cli.command;
+        assert!(plugin_args.json);
         match plugin_args.command {
             PluginCommand::Check(args) => {
                 assert_eq!(args.protocol, 2);
@@ -288,6 +315,31 @@ mod tests {
     fn parser_requires_plugin_argument() {
         let err = TestCli::try_parse_from(["claw", "plugin", "check"]).unwrap_err();
         assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn plugin_check_json_receipt_is_v1_and_non_secret() {
+        let args = CheckArgs {
+            protocol: 1,
+            plugin: PathBuf::from("./bin/example-plugin"),
+            timeout_ms: 30_000,
+        };
+
+        let receipt = plugin_check_receipt(&args, "init-1", true);
+
+        assert_eq!(receipt["schema_version"], 1);
+        assert_eq!(receipt["action"], "plugin.check");
+        assert_eq!(receipt["ok"], true);
+        assert_eq!(receipt["plugin"], "./bin/example-plugin");
+        assert_eq!(receipt["protocol"], 1);
+        assert_eq!(receipt["timeout_ms"], 30_000);
+        assert_eq!(receipt["request_id"], "init-1");
+        assert_eq!(receipt["jsonrpc"], "1.0");
+        assert_eq!(receipt["method"], "plugin.initialize");
+        assert!(
+            receipt.get("stdin").is_none() && receipt.get("stderr").is_none(),
+            "plugin check receipt must not preserve plugin streams"
+        );
     }
 
     #[test]

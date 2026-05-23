@@ -18,13 +18,13 @@ Claw validates a single bearer token value at daemon runtime. Rotation is a coor
 2. Update daemon host profile:
 
 ```bash
-claw auth token set "<new-token>" --profile default
+printf '%s\n' "$CLAW_TOKEN" | claw auth token set --stdin --profile default
 ```
 
 3. Update client profile(s) that use `--token-profile default`:
 
 ```bash
-claw auth token set "<new-token>" --profile default
+printf '%s\n' "$CLAW_TOKEN" | claw auth token set --stdin --profile default
 ```
 
 4. Restart daemon.
@@ -50,5 +50,6 @@ If rotation breaks connectivity:
 
 ## Notes
 
-- Auth profiles are stored in `~/.claw/auth.toml` with encrypted token fields.
+- Auth profiles are stored in `~/.claw/auth.toml` with encrypted token fields
+  and private file permissions.
 - Keep profile names consistent across automation and runbooks.

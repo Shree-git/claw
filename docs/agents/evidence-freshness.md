@@ -64,7 +64,8 @@ The same checks run during `claw policy eval`, fail-closed shipping when
 `policy.fail_closed_ship = true`, and integration policy evaluation.
 
 In `v0.1.x`, freshness policy validates that digests are present and tied to the
-capsule evidence record. Claw does not yet store logs/artifacts or compare
-stored bytes against those digests during policy evaluation; CI, release, or
-artifact systems must perform that equality check until the artifact store is
-wired into policy execution.
+capsule evidence record. `claw provenance replay` compares replayed command
+stdout/stderr against a claimed `log_digest` when one is present. Policy
+evaluation itself does not store artifact bytes or compare external artifact
+payloads against their digests; CI, release, or artifact systems must perform
+that equality check until the artifact store is wired into policy execution.

@@ -25,15 +25,16 @@ claw auth token list
 - Fix:
 
 ```bash
-claw auth token set "<token>" --profile <name>
+printf '%s\n' "$CLAW_TOKEN" | claw auth token set --stdin --profile <name>
 ```
 
 Then retry daemon start or sync operation.
 
-### `use either --auth-token or --auth-profile, not both`
+### `use only one of --auth-token, --auth-token-stdin, or --auth-profile`
 
-- Cause: both daemon auth options set.
-- Fix: choose exactly one auth source.
+- Cause: multiple daemon auth token sources are set.
+- Fix: choose exactly one auth source. Prefer `--auth-profile` for production
+  services or `--auth-token-stdin` for one-off automation.
 
 ### Preflight fails on TLS config
 

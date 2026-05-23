@@ -26,6 +26,7 @@
 //!
 /// Store error types.
 pub mod error;
+mod fs_util;
 /// HEAD file read/write helpers.
 pub mod head;
 /// Worktree index data structures.

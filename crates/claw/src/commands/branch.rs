@@ -16,6 +16,7 @@ pub struct BranchArgs {
 #[derive(Subcommand)]
 enum BranchCommand {
     /// Create a new branch
+    #[command(alias = "new")]
     Create {
         /// Name of the new branch
         name: String,
@@ -24,6 +25,7 @@ enum BranchCommand {
         dry_run: bool,
     },
     /// Delete a branch
+    #[command(alias = "rm", alias = "del")]
     Delete {
         /// Name of the branch to delete
         name: String,
@@ -69,7 +71,7 @@ pub fn run(args: BranchArgs) -> anyhow::Result<()> {
                                 "name": name.strip_prefix("heads/").unwrap_or(name),
                                 "ref": name,
                                 "current": current_branch.as_deref() == Some(name.as_str()),
-                                "target": id.to_hex(),
+                                "target": id.to_string(),
                                 "unborn": false,
                             })
                         })
@@ -78,9 +80,12 @@ pub fn run(args: BranchArgs) -> anyhow::Result<()> {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
+                        "schema_version": 1,
+                        "action": "branch.list",
                         "current": current_branch
                             .as_deref()
                             .map(|name| name.strip_prefix("heads/").unwrap_or(name)),
+                        "branch_count": branches.len(),
                         "branches": branches,
                     }))?
                 );
@@ -118,10 +123,11 @@ pub fn run(args: BranchArgs) -> anyhow::Result<()> {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
-                        "action": "create",
+                        "schema_version": 1,
+                        "action": "branch.create",
                         "branch": name,
                         "ref": ref_name,
-                        "target": head_id.to_hex(),
+                        "target": head_id.to_string(),
                         "dry_run": dry_run,
                         "created": !dry_run,
                     }))?
@@ -156,10 +162,11 @@ pub fn run(args: BranchArgs) -> anyhow::Result<()> {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
-                        "action": "delete",
+                        "schema_version": 1,
+                        "action": "branch.delete",
                         "branch": name,
                         "ref": ref_name,
-                        "target": target.to_hex(),
+                        "target": target.to_string(),
                         "dry_run": dry_run,
                         "deleted": !dry_run,
                     }))?

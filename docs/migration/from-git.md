@@ -38,6 +38,18 @@ For multiple branches:
 claw git-import --all-branches
 ```
 
+For a team migration trial that should infer Claw intents and changes from
+branches and provider metadata, use the wizard:
+
+```bash
+claw migration wizard --git-dir ../repo/.git --metadata-file provider.json --read-notes
+```
+
+The wizard imports every Git branch into `heads/migrated/*`, creates inferred
+intent/change objects, preserves raw GitHub/GitLab issue and PR metadata as a
+Claw blob, imports provenance notes when requested, and stores policy
+suggestions for review.
+
 If you rely on Git notes for provenance, include notes in the trial and record
 the notes ref in your migration notes:
 

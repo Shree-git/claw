@@ -18,52 +18,20 @@ impl Codec for JsonTreeCodec {
         let new_val: Value =
             serde_json::from_slice(new).map_err(|e| PatchError::InvalidJson(e.to_string()))?;
 
-        let mut ops = Vec::new();
-        diff_values("", &old_val, &new_val, &mut ops)?;
-        Ok(ops)
+        diff_json_values(&old_val, &new_val)
     }
 
     fn apply(&self, base: &[u8], ops: &[PatchOp]) -> Result<Vec<u8>, PatchError> {
         let mut val: Value =
             serde_json::from_slice(base).map_err(|e| PatchError::InvalidJson(e.to_string()))?;
 
-        for op in ops {
-            apply_op(&mut val, op)?;
-        }
+        apply_json_ops(&mut val, ops)?;
 
         serde_json::to_vec_pretty(&val).map_err(|e| PatchError::ApplyFailed(e.to_string()))
     }
 
     fn invert(&self, ops: &[PatchOp]) -> Result<Vec<PatchOp>, PatchError> {
-        let mut inverted: Vec<PatchOp> = ops
-            .iter()
-            .map(|op| match op.op_type.as_str() {
-                "insert" => PatchOp {
-                    address: op.address.clone(),
-                    op_type: "delete".to_string(),
-                    old_data: op.new_data.clone(),
-                    new_data: None,
-                    context_hash: None,
-                },
-                "delete" => PatchOp {
-                    address: op.address.clone(),
-                    op_type: "insert".to_string(),
-                    old_data: None,
-                    new_data: op.old_data.clone(),
-                    context_hash: None,
-                },
-                "replace" => PatchOp {
-                    address: op.address.clone(),
-                    op_type: "replace".to_string(),
-                    old_data: op.new_data.clone(),
-                    new_data: op.old_data.clone(),
-                    context_hash: None,
-                },
-                _ => op.clone(),
-            })
-            .collect();
-        inverted.reverse();
-        Ok(inverted)
+        invert_json_ops(ops)
     }
 
     fn commute(
@@ -71,26 +39,7 @@ impl Codec for JsonTreeCodec {
         left: &[PatchOp],
         right: &[PatchOp],
     ) -> Result<(Vec<PatchOp>, Vec<PatchOp>), PatchError> {
-        // JSON tree commutation: independent paths commute, same path = conflict
-        for l in left {
-            for r in right {
-                let rel = path_relationship(&l.address, &r.address);
-                match rel {
-                    PathRelation::Equal | PathRelation::AncestorOf | PathRelation::DescendantOf => {
-                        return Err(PatchError::CommuteFailed);
-                    }
-                    PathRelation::Independent => {}
-                    PathRelation::SiblingArrayElements => {
-                        // Array index adjustment would be needed for full impl
-                        // Array edits at the same path are treated as non-commutable until
-                        // indexed array operations are represented explicitly.
-                        return Err(PatchError::CommuteFailed);
-                    }
-                }
-            }
-        }
-        // Independent paths: they commute as-is
-        Ok((right.to_vec(), left.to_vec()))
+        commute_json_ops(left, right)
     }
 
     fn merge3(&self, base: &[u8], left: &[u8], right: &[u8]) -> Result<Vec<u8>, PatchError> {
@@ -101,9 +50,75 @@ impl Codec for JsonTreeCodec {
         let right_val: Value =
             serde_json::from_slice(right).map_err(|e| PatchError::InvalidJson(e.to_string()))?;
 
-        let merged = merge3_values(&base_val, &left_val, &right_val)?;
+        let merged = merge3_json_values(&base_val, &left_val, &right_val)?;
         serde_json::to_vec_pretty(&merged).map_err(|e| PatchError::Merge3Failed(e.to_string()))
     }
+}
+
+pub(crate) fn diff_json_values(old: &Value, new: &Value) -> Result<Vec<PatchOp>, PatchError> {
+    let mut ops = Vec::new();
+    diff_values("", old, new, &mut ops)?;
+    Ok(ops)
+}
+
+pub(crate) fn apply_json_ops(val: &mut Value, ops: &[PatchOp]) -> Result<(), PatchError> {
+    for op in ops {
+        apply_op(val, op)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn invert_json_ops(ops: &[PatchOp]) -> Result<Vec<PatchOp>, PatchError> {
+    let mut inverted: Vec<PatchOp> = ops
+        .iter()
+        .map(|op| match op.op_type.as_str() {
+            "insert" => PatchOp {
+                address: op.address.clone(),
+                op_type: "delete".to_string(),
+                old_data: op.new_data.clone(),
+                new_data: None,
+                context_hash: None,
+            },
+            "delete" => PatchOp {
+                address: op.address.clone(),
+                op_type: "insert".to_string(),
+                old_data: None,
+                new_data: op.old_data.clone(),
+                context_hash: None,
+            },
+            "replace" => PatchOp {
+                address: op.address.clone(),
+                op_type: "replace".to_string(),
+                old_data: op.new_data.clone(),
+                new_data: op.old_data.clone(),
+                context_hash: None,
+            },
+            _ => op.clone(),
+        })
+        .collect();
+    inverted.reverse();
+    Ok(inverted)
+}
+
+pub(crate) fn commute_json_ops(
+    left: &[PatchOp],
+    right: &[PatchOp],
+) -> Result<(Vec<PatchOp>, Vec<PatchOp>), PatchError> {
+    for l in left {
+        for r in right {
+            let rel = path_relationship(&l.address, &r.address);
+            match rel {
+                PathRelation::Equal | PathRelation::AncestorOf | PathRelation::DescendantOf => {
+                    return Err(PatchError::CommuteFailed);
+                }
+                PathRelation::Independent => {}
+                PathRelation::SiblingArrayElements => {
+                    return Err(PatchError::CommuteFailed);
+                }
+            }
+        }
+    }
+    Ok((right.to_vec(), left.to_vec()))
 }
 
 fn value_bytes(value: &Value) -> Result<Vec<u8>, PatchError> {
@@ -360,7 +375,11 @@ fn path_relationship(a: &str, b: &str) -> PathRelation {
     PathRelation::Independent
 }
 
-fn merge3_values(base: &Value, left: &Value, right: &Value) -> Result<Value, PatchError> {
+pub(crate) fn merge3_json_values(
+    base: &Value,
+    left: &Value,
+    right: &Value,
+) -> Result<Value, PatchError> {
     if left == right {
         return Ok(left.clone());
     }
@@ -387,7 +406,7 @@ fn merge3_values(base: &Value, left: &Value, right: &Value) -> Result<Value, Pat
 
                 match (b, l, r) {
                     (Some(bv), Some(lv), Some(rv)) => {
-                        merged.insert(key.clone(), merge3_values(bv, lv, rv)?);
+                        merged.insert(key.clone(), merge3_json_values(bv, lv, rv)?);
                     }
                     (Some(_), Some(_lv), None) => {
                         // Right deleted, left kept or modified

@@ -1,17 +1,20 @@
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 
 use base64::prelude::*;
 use clap::{Args, Subcommand};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 
-use crate::auth_store::{load_auth_config, save_auth_config, AuthProfile};
+use crate::auth_store::{save_auth_config, try_load_auth_config, AuthProfile};
 
 // Hosted auth endpoints use this public CLI client id by convention.
 const HOSTED_OAUTH_CLIENT_ID: &str = "claw-cli";
 
 #[derive(Args)]
 pub struct AuthArgs {
+    /// Output command results as JSON without printing token secrets
+    #[arg(long, global = true)]
+    json: bool,
     #[command(subcommand)]
     command: AuthCommand,
 }
@@ -47,7 +50,11 @@ enum AuthCommand {
 enum TokenCommand {
     /// Set access token manually
     Set {
-        token: String,
+        /// Access token. Prefer --stdin to avoid shell history exposure.
+        token: Option<String>,
+        /// Read the access token from stdin instead of a command argument.
+        #[arg(long)]
+        stdin: bool,
         /// Base URL of the hosted auth API
         #[arg(long, value_name = "URL")]
         base_url: String,
@@ -93,9 +100,14 @@ fn pkce_challenge(verifier: &str) -> String {
     BASE64_URL_SAFE_NO_PAD.encode(hasher.finalize())
 }
 
-fn prompt_input(prompt: &str) -> anyhow::Result<String> {
-    print!("{prompt}");
-    io::stdout().flush()?;
+fn prompt_input(prompt: &str, stderr: bool) -> anyhow::Result<String> {
+    if stderr {
+        eprint!("{prompt}");
+        io::stderr().flush()?;
+    } else {
+        print!("{prompt}");
+        io::stdout().flush()?;
+    }
 
     let mut line = String::new();
     io::stdin().read_line(&mut line)?;
@@ -108,13 +120,18 @@ pub async fn run(args: AuthArgs) -> anyhow::Result<()> {
             base_url,
             profile,
             no_browser,
-        } => login(base_url, profile, no_browser).await,
-        AuthCommand::Logout { profile } => logout(profile),
-        AuthCommand::Token { command } => token(command),
+        } => login(base_url, profile, no_browser, args.json).await,
+        AuthCommand::Logout { profile } => logout(profile, args.json),
+        AuthCommand::Token { command } => token(command, args.json),
     }
 }
 
-async fn login(base_url: String, profile: String, no_browser: bool) -> anyhow::Result<()> {
+async fn login(
+    base_url: String,
+    profile: String,
+    no_browser: bool,
+    json: bool,
+) -> anyhow::Result<()> {
     let verifier = random_urlsafe(48);
     let challenge = pkce_challenge(&verifier);
     let state = random_urlsafe(16);
@@ -133,8 +150,12 @@ async fn login(base_url: String, profile: String, no_browser: bool) -> anyhow::R
         let _ = webbrowser::open(&authorize_url);
     }
 
-    println!("Open this URL to authenticate:\n{authorize_url}\n");
-    let code = prompt_input("Paste authorization code: ")?;
+    if json {
+        eprintln!("Open this URL to authenticate:\n{authorize_url}\n");
+    } else {
+        println!("Open this URL to authenticate:\n{authorize_url}\n");
+    }
+    let code = prompt_input("Paste authorization code: ", json)?;
     if code.is_empty() {
         anyhow::bail!("authorization code is required");
     }
@@ -154,7 +175,7 @@ async fn login(base_url: String, profile: String, no_browser: bool) -> anyhow::R
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
         anyhow::bail!(
-            "token exchange failed ({}). You can fallback to `claw auth token set <token> --base-url {} --profile {}`. Body: {}",
+            "token exchange failed ({}). You can fallback to `claw auth token set --stdin --base-url {} --profile {}`. Body: {}",
             status,
             base_url,
             profile,
@@ -169,11 +190,12 @@ async fn login(base_url: String, profile: String, no_browser: bool) -> anyhow::R
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|dur| dur.as_secs());
 
-    let mut config = load_auth_config();
+    let refresh_token_present = token_response.refresh_token.is_some();
+    let mut config = try_load_auth_config()?;
     config.profiles.insert(
         profile.clone(),
         AuthProfile {
-            base_url,
+            base_url: base_url.clone(),
             access_token: token_response.access_token,
             refresh_token: token_response.refresh_token,
             expires_at_unix,
@@ -181,64 +203,137 @@ async fn login(base_url: String, profile: String, no_browser: bool) -> anyhow::R
     );
     save_auth_config(&config)?;
 
-    println!("Saved auth profile '{profile}'");
+    if json {
+        print_auth_json(serde_json::json!({
+            "schema_version": 1,
+            "action": "auth.login",
+            "profile": profile,
+            "base_url": base_url,
+            "saved": true,
+            "token_present": true,
+            "refresh_token_present": refresh_token_present,
+            "expires_at_unix": expires_at_unix,
+        }))?;
+    } else {
+        println!("Saved auth profile '{profile}'");
+    }
     Ok(())
 }
 
-fn logout(profile: String) -> anyhow::Result<()> {
-    let mut config = load_auth_config();
+fn logout(profile: String, json: bool) -> anyhow::Result<()> {
+    let mut config = try_load_auth_config()?;
     if config.profiles.remove(&profile).is_none() {
         anyhow::bail!("profile '{}' not found", profile);
     }
 
     save_auth_config(&config)?;
-    println!("Logged out profile '{profile}'");
+    if json {
+        print_auth_json(serde_json::json!({
+            "schema_version": 1,
+            "action": "auth.logout",
+            "profile": profile,
+            "removed": true,
+        }))?;
+    } else {
+        println!("Logged out profile '{profile}'");
+    }
     Ok(())
 }
 
-fn token(command: TokenCommand) -> anyhow::Result<()> {
+fn token(command: TokenCommand, json: bool) -> anyhow::Result<()> {
     match command {
         TokenCommand::Set {
             token,
+            stdin,
             base_url,
             profile,
         } => {
-            let mut config = load_auth_config();
+            let token_source = if stdin { "stdin" } else { "argument" };
+            let mut input = io::stdin();
+            let token = resolve_token_value(token, stdin, &mut input)?;
+            let mut config = try_load_auth_config()?;
             config.profiles.insert(
                 profile.clone(),
                 AuthProfile {
-                    base_url,
+                    base_url: base_url.clone(),
                     access_token: token,
                     refresh_token: None,
                     expires_at_unix: None,
                 },
             );
             save_auth_config(&config)?;
-            println!("Stored token in profile '{profile}'");
+            if json {
+                print_auth_json(serde_json::json!({
+                    "schema_version": 1,
+                    "action": "auth.token.set",
+                    "profile": profile,
+                    "base_url": base_url,
+                    "saved": true,
+                    "token_source": token_source,
+                    "token_present": true,
+                    "refresh_token_present": false,
+                    "expires_at_unix": null,
+                }))?;
+            } else {
+                println!("Stored token in profile '{profile}'");
+            }
         }
         TokenCommand::Show { profile } => {
-            let config = load_auth_config();
+            let config = try_load_auth_config()?;
             let entry = config
                 .profiles
                 .get(&profile)
                 .ok_or_else(|| anyhow::anyhow!("profile '{}' not found", profile))?;
 
-            let masked = if entry.access_token.len() > 10 {
-                format!("{}...", &entry.access_token[0..10])
+            if json {
+                print_auth_json(serde_json::json!({
+                    "schema_version": 1,
+                    "action": "auth.token.show",
+                    "profile": profile,
+                    "base_url": entry.base_url,
+                    "token_present": !entry.access_token.is_empty(),
+                    "refresh_token_present": entry.refresh_token.is_some(),
+                    "expires_at_unix": entry.expires_at_unix,
+                }))?;
             } else {
-                "***".to_string()
-            };
-
-            println!("profile: {profile}");
-            println!("base_url: {}", entry.base_url);
-            println!("access_token: {masked}");
-            if let Some(exp) = entry.expires_at_unix {
-                println!("expires_at_unix: {exp}");
+                println!("profile: {profile}");
+                println!("base_url: {}", entry.base_url);
+                println!(
+                    "access_token: {}",
+                    if entry.access_token.is_empty() {
+                        "missing"
+                    } else {
+                        "present"
+                    }
+                );
+                if let Some(exp) = entry.expires_at_unix {
+                    println!("expires_at_unix: {exp}");
+                }
             }
         }
         TokenCommand::List => {
-            let config = load_auth_config();
-            if config.profiles.is_empty() {
+            let config = try_load_auth_config()?;
+            if json {
+                let profiles: Vec<_> = config
+                    .profiles
+                    .iter()
+                    .map(|(name, profile)| {
+                        serde_json::json!({
+                            "profile": name,
+                            "base_url": profile.base_url,
+                            "token_present": !profile.access_token.is_empty(),
+                            "refresh_token_present": profile.refresh_token.is_some(),
+                            "expires_at_unix": profile.expires_at_unix,
+                        })
+                    })
+                    .collect();
+                print_auth_json(serde_json::json!({
+                    "schema_version": 1,
+                    "action": "auth.token.list",
+                    "profile_count": profiles.len(),
+                    "profiles": profiles,
+                }))?;
+            } else if config.profiles.is_empty() {
                 println!("No auth profiles configured");
             } else {
                 for (name, profile) in config.profiles {
@@ -251,10 +346,41 @@ fn token(command: TokenCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn resolve_token_value<R: Read>(
+    token: Option<String>,
+    stdin: bool,
+    reader: &mut R,
+) -> anyhow::Result<String> {
+    match (token, stdin) {
+        (Some(_), true) => anyhow::bail!("pass token as an argument or --stdin, not both"),
+        (Some(token), false) => ensure_token_not_empty(token),
+        (None, true) => {
+            let mut token = String::new();
+            reader.read_to_string(&mut token)?;
+            let token = token.trim_end_matches(['\r', '\n']).to_string();
+            ensure_token_not_empty(token)
+        }
+        (None, false) => anyhow::bail!("token value is required; pass <token> or --stdin"),
+    }
+}
+
+fn ensure_token_not_empty(token: String) -> anyhow::Result<String> {
+    if token.is_empty() {
+        anyhow::bail!("token value is required; pass <token> or --stdin");
+    }
+    Ok(token)
+}
+
+fn print_auth_json(value: serde_json::Value) -> anyhow::Result<()> {
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::Parser;
+    use std::io::Cursor;
 
     #[derive(Parser)]
     struct TestCli {
@@ -274,9 +400,42 @@ mod tests {
     fn token_set_records_explicit_base_url() {
         let cli = TestCli::parse_from([
             "claw",
+            "--json",
             "token",
             "set",
             "token-value",
+            "--base-url",
+            "https://daemon.example.invalid",
+            "--profile",
+            "prod",
+        ]);
+        assert!(cli.args.json);
+        match cli.args.command {
+            AuthCommand::Token {
+                command:
+                    TokenCommand::Set {
+                        token,
+                        stdin,
+                        base_url,
+                        profile,
+                    },
+            } => {
+                assert_eq!(token.as_deref(), Some("token-value"));
+                assert!(!stdin);
+                assert_eq!(base_url, "https://daemon.example.invalid");
+                assert_eq!(profile, "prod");
+            }
+            _ => panic!("expected token set"),
+        }
+    }
+
+    #[test]
+    fn token_set_can_read_secret_from_stdin() {
+        let cli = TestCli::parse_from([
+            "claw",
+            "token",
+            "set",
+            "--stdin",
             "--base-url",
             "https://daemon.example.invalid",
             "--profile",
@@ -287,15 +446,34 @@ mod tests {
                 command:
                     TokenCommand::Set {
                         token,
+                        stdin,
                         base_url,
                         profile,
                     },
             } => {
-                assert_eq!(token, "token-value");
+                assert!(token.is_none());
+                assert!(stdin);
                 assert_eq!(base_url, "https://daemon.example.invalid");
                 assert_eq!(profile, "prod");
             }
             _ => panic!("expected token set"),
         }
+
+        let mut input = Cursor::new("secret-from-stdin\n");
+        let token = resolve_token_value(None, true, &mut input).expect("stdin token");
+        assert_eq!(token, "secret-from-stdin");
+    }
+
+    #[test]
+    fn token_set_rejects_ambiguous_or_missing_secret_input() {
+        let mut empty = Cursor::new("");
+        let missing = resolve_token_value(None, false, &mut empty)
+            .expect_err("missing token source should fail");
+        assert!(missing.to_string().contains("pass <token> or --stdin"));
+
+        let mut ignored = Cursor::new("stdin-token");
+        let ambiguous = resolve_token_value(Some("arg-token".to_string()), true, &mut ignored)
+            .expect_err("ambiguous token sources should fail");
+        assert!(ambiguous.to_string().contains("as an argument or --stdin"));
     }
 }

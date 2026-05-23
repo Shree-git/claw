@@ -13,6 +13,20 @@ use intents, record changes, attach evidence, and sign capsules.
 - [Key rotation and revocation](key-rotation-and-revocation.md)
 - [Integration guide](integration-guide.md)
 
+## SDKs and MCP
+
+Agent integrations can use the CLI directly, the Rust crate
+`claw-vcs-agent-sdk`, the lightweight TypeScript and Python SDKs under `sdk/`,
+or the local MCP server:
+
+```bash
+claw mcp serve
+claw mcp serve --allow-write
+```
+
+The default MCP server exposes read-only repository tools. `--allow-write`
+adds intent and change creation tools for trusted agent runtimes.
+
 ## Agent contract
 
 An agent should:
@@ -45,7 +59,10 @@ list` shows the compact form `key:verified`.
 - `claw agent register --public-key <hex>` and
   `claw agent rotate --public-key <hex>` support externally managed Ed25519
   keys.
-- `claw agent rotate` and `claw agent revoke` update repository registrations
-  for future policy decisions.
+- `claw agent rotate`, `claw agent quarantine`, `claw agent unquarantine`, and
+  `claw agent revoke` update repository registrations for future policy
+  decisions.
+- `claw agent audit` scans fleet state across all `agents/*` refs and returns
+  triage counts plus per-agent recommended actions.
 - Policy enforcement depends on policies referenced by intents. Creating a
   policy object does not attach it to every intent.

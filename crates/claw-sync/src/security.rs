@@ -552,8 +552,12 @@ impl AuditSink for JsonlAuditSink {
             tracing::error!(error = %err, "failed to write audit log event");
             return;
         }
-        if let Err(err) = file.write_all(b"\n").and_then(|_| file.flush()) {
-            tracing::error!(error = %err, "failed to flush audit log event");
+        if let Err(err) = file
+            .write_all(b"\n")
+            .and_then(|_| file.flush())
+            .and_then(|_| file.sync_all())
+        {
+            tracing::error!(error = %err, "failed to flush or sync audit log event");
         }
     }
 }

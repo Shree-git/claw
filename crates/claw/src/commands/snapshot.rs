@@ -8,6 +8,7 @@ use claw_store::tree_diff::{diff_trees, ChangeKind};
 use claw_store::{ClawStore, HeadState};
 
 use crate::config::find_repo_root;
+use crate::conflict_writer;
 use crate::ignore::IgnoreRules;
 use crate::merge_state;
 use crate::worktree;
@@ -21,7 +22,7 @@ pub struct SnapshotArgs {
     #[arg(short, long, default_value = "claw")]
     author: String,
     /// Optional change ID to associate
-    #[arg(long)]
+    #[arg(short, long)]
     change: Option<String>,
     /// Output result as JSON
     #[arg(long)]
@@ -91,8 +92,9 @@ pub fn run(args: SnapshotArgs) -> anyhow::Result<()> {
         merge_state::remove(&claw_dir)?;
         // Remove conflict sidecars
         for conflict in &ms.conflicts {
-            let base_path = root.join(format!("{}.BASE", conflict.file_path));
-            let right_path = root.join(format!("{}.RIGHT", conflict.file_path));
+            let conflicted_path = root.join(&conflict.file_path);
+            let base_path = conflict_writer::sidecar_path(&conflicted_path, "BASE");
+            let right_path = conflict_writer::sidecar_path(&conflicted_path, "RIGHT");
             let _ = std::fs::remove_file(base_path);
             let _ = std::fs::remove_file(right_path);
         }
@@ -101,11 +103,13 @@ pub fn run(args: SnapshotArgs) -> anyhow::Result<()> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
+                    "schema_version": 1,
+                    "action": "snapshot",
                     "snapshot_created": true,
                     "merge_resolved": true,
-                    "revision_id": rev_id.to_hex(),
+                    "revision_id": rev_id.to_string(),
                     "branch": branch_ref,
-                    "parents": [left_rev.to_hex(), right_rev.to_hex()],
+                    "parents": [left_rev.to_string(), right_rev.to_string()],
                 }))?
             );
         } else {
@@ -134,9 +138,15 @@ pub fn run(args: SnapshotArgs) -> anyhow::Result<()> {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
+                        "schema_version": 1,
+                        "action": "snapshot",
                         "snapshot_created": false,
                         "reason": "clean",
                         "branch": branch_ref,
+                        "revision_id": serde_json::Value::Null,
+                        "merge_resolved": false,
+                        "patches": 0,
+                        "changed_files": 0,
                     }))?
                 );
             } else {
@@ -221,9 +231,11 @@ pub fn run(args: SnapshotArgs) -> anyhow::Result<()> {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": 1,
+                "action": "snapshot",
                 "snapshot_created": true,
                 "merge_resolved": false,
-                "revision_id": rev_id.to_hex(),
+                "revision_id": rev_id.to_string(),
                 "branch": branch_ref,
                 "patches": patch_count,
                 "changed_files": changed_files,

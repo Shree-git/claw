@@ -74,6 +74,39 @@ fn admin_preflight_and_support_bundle_match_operator_docs() {
     assert!(preflight.stdout.contains("metadata directory"));
     assert!(preflight.stdout.contains("tls configuration"));
 
+    let preflight_json = env.run_ok(&repo, ["admin", "--json", "preflight"]);
+    let preflight_json = preflight_json.stdout_json();
+    assert_eq!(preflight_json["schema_version"], 1);
+    assert_eq!(preflight_json["action"], "preflight");
+    assert_eq!(preflight_json["ok"], true);
+    assert!(
+        preflight_json["summary"]["pass"]
+            .as_u64()
+            .unwrap_or_default()
+            >= 1,
+        "preflight JSON should include pass count"
+    );
+    assert_eq!(preflight_json["summary"]["fail"], 0);
+    assert!(preflight_json["checks"]
+        .as_array()
+        .expect("preflight checks array")
+        .iter()
+        .any(|check| check["name"] == "metadata directory"
+            && check["status"] == "pass"
+            && check["next_step"].is_null()));
+
+    std::fs::write(
+        repo.join(".claw/config.toml"),
+        r#"
+config_version = 1
+
+[tls]
+cert_path = "/private/claw/client.pem"
+key_path = "/private/claw/client-key.pem"
+"#,
+    )
+    .expect("write config with sensitive TLS paths");
+
     let bundle_path = env.temp_root().join("support-bundle.json");
     let bundle = env.run_ok(
         &repo,
@@ -93,6 +126,8 @@ fn admin_preflight_and_support_bundle_match_operator_docs() {
     let bundle_json: Value =
         serde_json::from_slice(&std::fs::read(&bundle_path).expect("read support bundle JSON"))
             .expect("support bundle must be valid JSON");
+    assert_eq!(bundle_json["schema_version"], 1);
+    assert_eq!(bundle_json["action"], "support-bundle");
     let expected_repo_root = std::fs::canonicalize(&repo).expect("canonicalize repo root");
     assert_eq!(
         bundle_json["repo_root"].as_str(),
@@ -107,6 +142,53 @@ fn admin_preflight_and_support_bundle_match_operator_docs() {
     assert!(
         bundle_json["refs_count"].as_u64().is_some(),
         "support bundle must include refs_count"
+    );
+    assert_eq!(
+        bundle_json["config"]["tls"]["cert_path"],
+        "<redacted:support-bundle>"
+    );
+    assert_eq!(
+        bundle_json["config"]["tls"]["key_path"],
+        "<redacted:support-bundle>"
+    );
+    assert!(bundle_json["redactions"]
+        .as_array()
+        .expect("support bundle redactions")
+        .iter()
+        .any(|entry| entry == "config.tls.key_path"));
+
+    let bundle_json_path = env.temp_root().join("support-bundle-json.json");
+    let bundle_receipt = env.run_ok(
+        &repo,
+        [
+            "admin",
+            "--json",
+            "support-bundle",
+            "--out",
+            bundle_json_path
+                .to_str()
+                .expect("support bundle JSON path utf-8"),
+        ],
+    );
+    let bundle_receipt_json = bundle_receipt.stdout_json();
+    assert_eq!(bundle_receipt_json["schema_version"], 1);
+    assert_eq!(bundle_receipt_json["action"], "support-bundle");
+    assert_eq!(bundle_receipt_json["written"], true);
+    assert_eq!(
+        bundle_receipt_json["path"].as_str(),
+        Some(
+            bundle_json_path
+                .to_str()
+                .expect("support bundle path utf-8")
+        )
+    );
+    assert!(bundle_receipt_json["request_id"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("req_")));
+    assert_eq!(bundle_receipt_json["redaction_count"], 2);
+    assert!(
+        bundle_json_path.exists(),
+        "support bundle JSON receipt should point to a written bundle file"
     );
 
     let ledger = std::fs::read_to_string(repo.join(".claw/migrations/ledger.jsonl"))
@@ -127,13 +209,42 @@ fn admin_migrate_and_git_bridge_commands_work_end_to_end() {
     assert!(migration_plan.stdout.contains("Migration plan ->"));
     assert!(migration_plan.stdout.contains(".claw/config.toml"));
 
+    let migration_plan_json = env.run_ok(&repo, ["admin", "--json", "migrate", "plan"]);
+    let migration_plan_json = migration_plan_json.stdout_json();
+    assert_eq!(migration_plan_json["schema_version"], 1);
+    assert_eq!(migration_plan_json["action"], "migrate.plan");
+    assert_eq!(migration_plan_json["dry_run"], false);
+    assert_eq!(migration_plan_json["applied"], false);
+    assert!(migration_plan_json["backup_id"].is_null());
+    assert!(migration_plan_json["target"]
+        .as_str()
+        .is_some_and(|target| target.ends_with(".claw/config.toml")));
+    assert!(migration_plan_json["diff"]
+        .as_str()
+        .is_some_and(|diff| diff.contains(".claw/config.toml")));
+
     let dry_run = env.run_ok(&repo, ["admin", "migrate", "apply", "--dry-run"]);
     assert!(dry_run
         .stdout
         .contains("Dry run complete. No files changed."));
 
-    let applied = env.run_ok(&repo, ["admin", "migrate", "apply"]);
-    assert!(applied.stdout.contains("Migration applied."));
+    let dry_run_json = env.run_ok(&repo, ["admin", "--json", "migrate", "apply", "--dry-run"]);
+    let dry_run_json = dry_run_json.stdout_json();
+    assert_eq!(dry_run_json["schema_version"], 1);
+    assert_eq!(dry_run_json["action"], "migrate.apply");
+    assert_eq!(dry_run_json["dry_run"], true);
+    assert_eq!(dry_run_json["applied"], false);
+    assert!(dry_run_json["backup_id"].is_null());
+
+    let applied = env.run_ok(&repo, ["admin", "--json", "migrate", "apply"]);
+    let applied_json = applied.stdout_json();
+    assert_eq!(applied_json["schema_version"], 1);
+    assert_eq!(applied_json["action"], "migrate.apply");
+    assert_eq!(applied_json["dry_run"], false);
+    assert_eq!(applied_json["applied"], true);
+    assert!(applied_json["backup_id"]
+        .as_str()
+        .is_some_and(|backup_id| !backup_id.is_empty()));
     let ledger = std::fs::read_to_string(repo.join(".claw/migrations/ledger.jsonl"))
         .expect("migration ledger should be written");
     assert!(ledger.contains("\"action\":\"migrate.apply\""));
@@ -162,9 +273,30 @@ fn admin_migrate_and_git_bridge_commands_work_end_to_end() {
     let imported_ref = env.run_ok(&repo, ["show", "heads/imported"]);
     assert!(imported_ref.stdout.contains("Seed revision"));
 
-    let roundtrip = env.run_ok(&repo, ["git-roundtrip"]);
-    assert!(roundtrip.stdout.contains("Roundtrip verified."));
-    assert!(roundtrip
-        .stdout
-        .contains("Imported ref: heads/roundtrip-verify"));
+    let roundtrip = env.run_ok(&repo, ["git-roundtrip", "--json"]);
+    let roundtrip_json = roundtrip.stdout_json();
+    assert_eq!(roundtrip_json["schema_version"], 1);
+    assert_eq!(roundtrip_json["action"], "git-roundtrip");
+    assert_eq!(roundtrip_json["verified"], true);
+    assert_eq!(roundtrip_json["source_ref"], "heads/main");
+    assert_eq!(
+        roundtrip_json["exported_git_ref"],
+        "refs/heads/claw/roundtrip-verify"
+    );
+    assert_eq!(roundtrip_json["import_ref"], "heads/roundtrip-verify");
+    assert_eq!(roundtrip_json["with_notes"], false);
+    assert_eq!(roundtrip_json["notes_imported"], serde_json::Value::Null);
+    assert_eq!(roundtrip_json["checks"]["tree"], true);
+    assert_eq!(roundtrip_json["checks"]["change_linkage"], true);
+    assert_eq!(roundtrip_json["checks"]["ancestry"], true);
+    assert!(roundtrip_json["source_revision"]
+        .as_str()
+        .is_some_and(|id| !id.is_empty()));
+    assert!(roundtrip_json["imported_revision"]
+        .as_str()
+        .is_some_and(|id| !id.is_empty()));
+    assert_eq!(
+        roundtrip_json["checks"]["source_revision_count"],
+        roundtrip_json["checks"]["imported_revision_count"]
+    );
 }

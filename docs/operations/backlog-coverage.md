@@ -76,10 +76,10 @@ release-channel verification passed on 2026-05-23.
 | 44 | Implemented | `examples/demo-media/command-gallery.svg` covers status, log, diff, show, policy, failed integrate, successful ship, and Git export. |
 | 45 | Implemented | `docs/migration/from-git.md` covers import/export, rollback, validation, and a Git feature support/lossiness matrix. |
 | 46 | Implemented | `docs/workflows/solo.md`, `human-agent-pair.md`, `multiple-agents.md`, `policy-gated-integration.md`, `sensitive-paths.md`, and `release.md`. |
-| 47 | Implemented | `docs/agents/integration-guide.md`, `agent-registration.md`, and `change-workflow.md`, including CLI and daemon/event integration boundaries. |
+| 47 | Implemented | `docs/agents/integration-guide.md`, `agent-registration.md`, and `change-workflow.md`, including CLI, SDK, MCP, daemon, and event integration boundaries. |
 | 48 | Implemented | `docs/agents/evidence-schema.md`. |
 | 49 | Implemented | `docs/agents/evidence-freshness.md` plus freshness policy implementation/tests. |
-| 50 | Implemented | `docs/agents/key-rotation-and-revocation.md` plus `claw agent keygen/register/rotate/revoke` support. |
+| 50 | Implemented | `docs/agents/key-rotation-and-revocation.md` plus `claw agent keygen/register/rotate/quarantine/unquarantine/revoke/audit` support. |
 
 ## P1: CLI And Developer Experience
 
@@ -90,11 +90,11 @@ release-channel verification passed on 2026-05-23.
 | 53 | Implemented | `claw version --json`; docs in `docs/cli/version.md`. |
 | 54 | Implemented | `status`, `log`, `show`, `policy eval`, `diff`, and `doctor` support JSON output; docs under `docs/cli/`. |
 | 55 | Implemented | JSON/human diagnostics include remediation; `docs/cli/exit-codes.md` and `docs/reference/public-interface-manifest.md` define the contract. |
-| 56 | Implemented | Aliases are limited, documented, and parser-tested (`serve`, create/new forms, compatibility aliases where needed). |
+| 56 | Implemented | Aliases are documented and parser-tested (`serve`, `st`, `br`, `co`, `snap`, `lg`, `d`, `cat`, `diag`, `ver`, `goal`, `chg`, create/new forms, and compatibility aliases where needed). |
 | 57 | Implemented | Dry-run support for integrate, sync push, policy apply, git-import, and git-export; help/docs verified. |
 | 58 | Implemented | `docs/cli/exit-codes.md` and `crates/claw/src/error.rs`. |
 | 59 | Implemented | `claw init` prints next steps. |
-| 60 | Implemented | Command docs exist in `docs/cli/` for init, intent, change, snapshot, ship, integrate, sync, git-export, and git-import with examples, JSON output, exit codes, and common errors. |
+| 60 | Implemented | Command docs exist in `docs/cli/` for init, intent, change, snapshot, ship, integrate, sync, mcp, git-export, and git-import with examples, JSON output, exit codes, and common errors. |
 
 ## P1: Daemon, Sync, And Security
 
@@ -108,7 +108,7 @@ release-channel verification passed on 2026-05-23.
 | 66 | Implemented | mTLS flags/docs/tests exist for daemon/sync; `tests/integration/cli_sync_e2e_tests.rs` exercises a live TLS daemon that requires a client certificate. |
 | 67 | Implemented | Replay protection uses principal/action/resource-scoped nonce metadata for mutating sync requests, authorizes before nonce consumption, and has sync tests proving unauthorized requests cannot poison replay state. Capsule evidence freshness separately binds evidence to exact revisions. |
 | 68 | Implemented | `docs/reference/compatibility.md`, `compatibility-matrix.json`, and sync negotiation code. |
-| 69 | Implemented | Remote compatibility/integration tests cover push/pull, full CLI clone, interruption, auth, stale token rejection, protocol mismatch, and live TLS/mTLS clone behavior. Partial-clone filters are implemented and tested at the daemon fetch protocol layer; CLI `sync clone` filter flags remain a documented limitation. |
+| 69 | Implemented | Remote compatibility/integration tests cover push/pull, full CLI clone, filtered CLI clone, interruption, auth, stale token rejection, protocol mismatch, and live TLS/mTLS clone behavior. Partial-clone filters are exposed for daemon-backed `sync pull` and `sync clone`; hosted `clawlab` HTTP remotes serialize the same filter shape when the remote advertises `partial-clone`. `sync push --policy <id>` provides a policy-aware push gate before upload/ref update, and hosted HTTP ref updates now carry the policy receipt only when the remote advertises `policy-aware-push`. |
 | 70 | Implemented | Recipient model for encrypted capsule fields is implemented in crypto/policy/CLI and documented in agent/security docs; daemon capsule reads use case-insensitive recipient matching for redaction, and generic object sync denies private capsule object bytes unless the caller has `capsules:private-read` and a matching recipient principal. |
 
 ## P1: Release And Packaging
@@ -145,7 +145,7 @@ release-channel verification passed on 2026-05-23.
 
 | # | Status | Evidence |
 |---:|---|---|
-| 91 | Verified | `docs/index.html`, `docs/landing-page.md`, and the manual, SHA-pinned `.github/workflows/pages.yml`; strict preflight on 2026-05-20 reported GitHub Pages configured. |
+| 91 | Verified | `docs/index.html`, `docs/playground/index.html`, `docs/landing-page.md`, and the manual, SHA-pinned `.github/workflows/pages.yml`; strict preflight on 2026-05-20 reported GitHub Pages configured. |
 | 92 | Implemented | README includes restrained CI/license/security badges. |
 | 93 | Verified | `docs/assets/social-preview.png` is an upload-ready 1280x640 asset with source SVG; preflight and artifact tests verify size and dimensions. Strict preflight on 2026-05-20 reported the GitHub social preview image uploaded. |
 | 94 | Verified | Logo overinvestment intentionally deferred; `docs/operations/name-clearance-evidence.md` records the v0.1.1 experimental launch naming decision and says to revisit trademark counsel before permanent logo, domain, or broad commercial brand investment. |
@@ -159,7 +159,7 @@ release-channel verification passed on 2026-05-23.
 | 102 | Implemented | `docs/reference/stability.md` and `docs/reference/public-interface-manifest.md` state the pre-1.0 experimental guarantee hierarchy. |
 | 103 | Implemented | `docs/reference/deprecation-policy.md` and `docs/maintainers/deprecations.md`. |
 | 104 | Implemented | `docs/reference/telemetry.md` and `docs/maintainers/telemetry.md`. |
-| 105 | Implemented | ClawLab/hosted remote references are marked planned in README, CLI docs, compatibility docs, known limitations, and telemetry policy; auth commands no longer default to a concrete hosted endpoint. |
+| 105 | Implemented | ClawLab/hosted remote references are guarded by release-note caveats while the client-side hosted HTTP adapter supports Claw-native object/refs sync, capability negotiation, bearer auth, policy-aware ref update receipts, policy-compatible object transfer, and partial-clone filter requests. Auth commands no longer default to a concrete hosted endpoint. |
 | 106 | Implemented | `docs/reference/data-layout.md`. |
 | 107 | Implemented | `examples/backup-restore/` and backup/restore runbook. |
 | 108 | Implemented | Disaster recovery and backup/rollback tests in `tests/integration/backlog_gap_tests.rs` plus CI example smoke. |

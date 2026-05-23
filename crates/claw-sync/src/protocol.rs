@@ -3,6 +3,8 @@ pub const CAP_PROTOCOL_V1: &str = "protocol:claw-sync/1";
 pub const CAP_PARTIAL_CLONE: &str = "partial-clone";
 pub const CAP_EVENT_BUS: &str = "event-bus";
 pub const CAP_REQUEST_LIMITS: &str = "request-limits";
+pub const CAP_HOSTED_HTTP: &str = "hosted-http";
+pub const CAP_POLICY_AWARE_PUSH: &str = "policy-aware-push";
 
 pub const SERVER_CAPABILITIES: &[&str] = &[
     CAP_PROTOCOL_V1,

@@ -79,6 +79,12 @@ pub fn run(args: DiffArgs) -> anyhow::Result<()> {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": 1,
+                "action": "diff",
+                "from": args.from.as_deref().unwrap_or("HEAD"),
+                "to": args.to.as_deref().unwrap_or("working_tree"),
+                "path_filter": args.path.as_deref(),
+                "change_count": entries.len(),
                 "changes": entries,
             }))?
         );

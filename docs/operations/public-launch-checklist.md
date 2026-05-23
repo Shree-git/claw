@@ -12,7 +12,7 @@ Status as of 2026-05-21:
 
 - GitHub repository: `Shree-git/claw-vcs`.
 - Secret scanning, push protection, and Dependabot security updates are enabled.
-  Open Dependabot alerts are launch-gated by `scripts/public-launch-preflight.sh`.
+  Strict preflight reports no open Dependabot alerts on `main`.
 - Full-history local secret scans passed on 2026-05-12 for the
   `codex/public-launch-hardening` branch history:
   `gitleaks detect --source . --no-git=false --redact --no-banner` reported no
@@ -31,11 +31,11 @@ Status as of 2026-05-21:
   `ai-agents`, `cli`, `developer-tools`, `provenance`, `rust`,
   `version-control`, `git`, `sigstore`, `slsa`, `supply-chain-security`, and
   `vcs`.
-- Package-name checks on 2026-05-12:
-  `claw-vcs` and the `claw-vcs-*` internal package names were not published on
-  crates.io, `claw`, `claw-core`, `claw-crypto`, and `claw-sync` were occupied
-  by unrelated crates, the planned WinGet manifest path
-  `ShreeGit.ClawVCS` was absent from `microsoft/winget-pkgs`, and
+- Package-name checks on 2026-05-20:
+  `claw-vcs` and the `claw-vcs-*` internal package names exist on crates.io
+  with verified owner `Shree-git`. `claw`, `claw-core`, `claw-crypto`, and
+  `claw-sync` remain occupied by unrelated crates. The planned WinGet manifest
+  path `ShreeGit.ClawVCS` is still absent from `microsoft/winget-pkgs`, and
   `Formula/claw.rb` exists in `Shree-git/homebrew-tap`.
 - `scripts/publish-cratesio.sh --dry-run` was run on 2026-05-12.
   `claw-vcs-core` packaged and verified successfully. The remaining internal
@@ -58,9 +58,9 @@ Status as of 2026-05-21:
   artifacts are published. The `v0.1.2-beta.1` release tag was pushed on
   2026-05-21, but the release workflow stopped before artifact publication
   because the dist matrix command allowlist rejected the generated cargo-dist
-  installer commands. The `v0.1.2-beta.2` replacement tag was pushed on
-  2026-05-22, but artifact smoke gates rejected the published `claw-vcs-*`
-  cargo-dist asset names.
+  installer commands. Follow-up beta tags exposed artifact-name, Unix smoke-path,
+  and Cosign bundle-signing issues; `v0.1.2-beta.5` resolved them and passed
+  release-channel verification on 2026-05-23.
   These are tracked in [issue #5](https://github.com/Shree-git/claw-vcs/issues/5)
   and [external-blockers.json](external-blockers.json).
 
@@ -69,7 +69,22 @@ Before announcement, run the maintainer preflight from an authenticated local ch
 ```bash
 scripts/public-launch-preflight.sh
 CLAW_PREFLIGHT_STRICT=1 CLAW_PREFLIGHT_CRATESIO_OWNER=<owner> scripts/public-launch-preflight.sh
+CLAW_PREFLIGHT_HEALTH_REPO=<repo> CLAW_PREFLIGHT_HEALTH_REPORT=release-verification/repo-health.json scripts/public-launch-preflight.sh
 ```
+
+For launch or production environments that already contain a Claw repository,
+archive machine-readable repository health evidence with:
+
+```bash
+CLAW_HEALTH_REPORT=release-verification/repo-health.json scripts/verify-repo-health.sh <repo>
+```
+
+`CLAW_HEALTH_REPORT` is written for both passing and failing gates so launch
+records can preserve the target repository path, checked binary, exit codes,
+and exact doctor/repair evidence reviewed.
+The public-launch preflight also runs this verifier when
+`CLAW_PREFLIGHT_HEALTH_REPO=<repo>` is set, writing the report to
+`CLAW_PREFLIGHT_HEALTH_REPORT` or `release-verification/repo-health.json`.
 
 The normal preflight reports launch blockers that are still pending. Strict
 mode is the broad-announcement gate: it fails until branch protection stays at
@@ -83,13 +98,14 @@ evidence is recorded.
 These steps require repository owner, package registry, release, or account
 access; they cannot be completed by editing this repository alone.
 
-1. Cut the launch-hardening release tag, then verify the published release
-   artifacts. The `v0.1.2-beta.1` and `v0.1.2-beta.2` tag attempts are not
-   launch-ready; rerun after the artifact-name fix lands on `main` and a
-   replacement release tag is cut.
+1. For each new launch-hardening release tag, verify the published release
+   artifacts. The `v0.1.2-beta.5` release is the current verified baseline; beta
+   tags `v0.1.2-beta.1` through `v0.1.2-beta.4` are recorded as failed attempts
+   in [install-verification-log.md](install-verification-log.md).
 
 ```bash
 scripts/public-launch-preflight.sh
+CLAW_PREFLIGHT_HEALTH_REPO=<repo> CLAW_PREFLIGHT_HEALTH_REPORT=release-verification/repo-health.json scripts/public-launch-preflight.sh
 CLAW_RELEASE_VERIFY_REPORT=release-verification/<launch-tag>.json scripts/verify-release-channel.sh <launch-tag>
 ```
 
@@ -102,8 +118,8 @@ CLAW_RELEASE_VERIFY_REPORT=release-verification/<launch-tag>.json scripts/verify
 
 - [x] Rename the GitHub repository to `claw-vcs`.
 - [x] Keep the binary and command name as `claw`.
-- [ ] Reserve or verify `claw-vcs` where package registries need an unambiguous project name.
-- [ ] Complete trademark/name clearance before investing in a permanent logo.
+- [x] Reserve or verify `claw-vcs` where package registries need an unambiguous project name.
+- [x] Complete trademark/name clearance before investing in a permanent logo.
       Record evidence in [name-clearance.md](name-clearance.md).
 
 ## GitHub Repository Rules
@@ -113,6 +129,8 @@ For `main`, require:
 - [x] pull request before merging
 - [x] at least one approving review
 - [x] stale approval dismissal
+- [x] code-owner review
+- [x] last-push approval
 - [x] required status checks
 - [x] conversation resolution
 - [x] signed commits
@@ -179,7 +197,7 @@ Suggested labels are tracked in [`.github/labels.yml`](../../.github/labels.yml)
 - [x] Add a static landing page artifact in `docs/index.html`.
 - [x] Add a manual, SHA-pinned GitHub Pages deployment workflow for the
   committed `docs/` site.
-- [ ] If the launch should include a public website, enable GitHub Pages or
+- [x] If the launch should include a public website, enable GitHub Pages or
   another docs host, run the manual deployment, and verify the rendered page.
 
 ## Social Preview
@@ -195,6 +213,7 @@ Version control for human + AI code.
 Upload-ready asset:
 
 - `docs/assets/social-preview.png` (1280x640 PNG, under 1 MB)
+- Uploaded in GitHub repository settings as of 2026-05-20.
 
 Source asset:
 

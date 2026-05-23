@@ -21,10 +21,10 @@ claw-store = { workspace = true }
 hex = { workspace = true }
 thiserror = { workspace = true }
 flate2 = { workspace = true }
+tempfile = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
-tempfile = { workspace = true }
 
 [[bench]]
 name = "import_export"

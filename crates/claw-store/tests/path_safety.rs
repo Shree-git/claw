@@ -1,7 +1,9 @@
 use claw_core::object::TypeTag;
 use claw_core::types::{validate_tree_entry_name, FileMode, Tree, TreeEntry};
 use claw_core::{content_hash, ObjectId};
-use claw_store::refs::{list_refs, validate_ref_name, write_ref};
+use claw_store::refs::{
+    delete_ref, list_refs, read_ref, update_ref_cas, validate_ref_name, write_ref,
+};
 use claw_store::{ClawStore, StoreError};
 
 #[test]
@@ -27,6 +29,83 @@ fn refs_reject_windows_separators_before_touching_disk() {
         !store.layout().refs_dir().join(r"heads\main").exists(),
         "backslash ref names must not be materialized as literal files"
     );
+}
+
+#[test]
+fn refs_reject_non_portable_components_before_touching_disk() {
+    let tmp = tempfile::tempdir().expect("temp repo");
+    let store = ClawStore::init(tmp.path()).expect("init store");
+    let id = content_hash(TypeTag::Blob, b"path safety");
+
+    for name in [
+        "heads/name:stream",
+        "heads/name*glob",
+        "heads/name?query",
+        "heads/name<in",
+        "heads/name>out",
+        "heads/pipe|name",
+        "heads/quoted\"name",
+        "heads/trailing-dot.",
+        "heads/trailing-space ",
+        "heads/CON",
+        "heads/con.txt",
+        "heads/PRN",
+        "heads/AUX",
+        "heads/NUL",
+        "heads/COM1",
+        "heads/com9.log",
+        "heads/LPT1",
+        "heads/lpt9.txt",
+    ] {
+        let err = validate_ref_name(name).expect_err("ref name should be rejected");
+        assert!(matches!(err, StoreError::InvalidRefName(_)));
+
+        let err = write_ref(store.layout(), name, &id).expect_err("write_ref should reject name");
+        assert!(matches!(err, StoreError::InvalidRefName(_)));
+    }
+
+    let overlong_component = format!("heads/{}", "a".repeat(256));
+    let err =
+        write_ref(store.layout(), &overlong_component, &id).expect_err("write_ref should reject");
+    assert!(matches!(err, StoreError::InvalidRefName(_)));
+}
+
+#[test]
+fn refs_reject_case_insensitive_collisions_before_touching_disk() {
+    let tmp = tempfile::tempdir().expect("temp repo");
+    let store = ClawStore::init(tmp.path()).expect("init store");
+    let main = content_hash(TypeTag::Blob, b"main");
+    let other = content_hash(TypeTag::Blob, b"other");
+
+    write_ref(store.layout(), "heads/main", &main).expect("write normal ref");
+
+    let err = write_ref(store.layout(), "heads/MAIN", &other)
+        .expect_err("case-insensitive sibling ref should be rejected");
+    assert!(matches!(err, StoreError::RefNameCollision { .. }));
+    assert!(!std::fs::read_dir(store.layout().refs_dir().join("heads"))
+        .unwrap()
+        .any(|entry| entry.unwrap().file_name() == "MAIN"));
+
+    let err = read_ref(store.layout(), "heads/MAIN")
+        .expect_err("case-insensitive read should not resolve wrong ref");
+    assert!(matches!(err, StoreError::RefNameCollision { .. }));
+
+    let err = delete_ref(store.layout(), "heads/MAIN")
+        .expect_err("case-insensitive delete should not remove wrong ref");
+    assert!(matches!(err, StoreError::RefNameCollision { .. }));
+    assert_eq!(read_ref(store.layout(), "heads/main").unwrap(), Some(main));
+
+    let err = update_ref_cas(
+        store.layout(),
+        "HEADS/dev",
+        None,
+        &other,
+        "test",
+        "case collision",
+    )
+    .expect_err("case-insensitive parent ref should be rejected before locking");
+    assert!(matches!(err, StoreError::RefNameCollision { .. }));
+    assert!(!store.layout().refs_dir().join("HEADS/dev.lock").exists());
 }
 
 #[test]
@@ -107,6 +186,34 @@ fn tree_entries_reject_overlong_basenames() {
     let err = validate_tree_entry_name(&name).expect_err("overlong basename should be rejected");
     assert!(
         err.to_string().contains("invalid tree entry name"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn tree_storage_rejects_case_insensitive_name_collisions() {
+    let tmp = tempfile::tempdir().expect("temp repo");
+    let store = ClawStore::init(tmp.path()).expect("init store");
+
+    let err = store
+        .store_object(&claw_core::object::Object::Tree(Tree {
+            entries: vec![
+                TreeEntry {
+                    name: "README.md".to_string(),
+                    mode: FileMode::Regular,
+                    object_id: ObjectId::from_bytes([0x11; 32]),
+                },
+                TreeEntry {
+                    name: "readme.md".to_string(),
+                    mode: FileMode::Regular,
+                    object_id: ObjectId::from_bytes([0x22; 32]),
+                },
+            ],
+        }))
+        .expect_err("case-insensitive tree entry collisions should not be stored");
+
+    assert!(
+        err.to_string().contains("case-insensitive filesystems"),
         "unexpected error: {err}"
     );
 }

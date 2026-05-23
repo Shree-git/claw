@@ -1,0 +1,15 @@
+[project]
+name = "claw-vcs-agent-sdk"
+version = "0.1.2b1"
+description = "Python helpers for agents that drive Claw VCS"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Claw contributors" }]
+keywords = ["vcs", "agents", "provenance", "claw"]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

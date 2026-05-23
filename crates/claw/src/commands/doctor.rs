@@ -16,6 +16,8 @@ use crate::commands::remote::RemotesConfig;
 use crate::config::find_repo_root;
 use crate::{auth_store, commands::remote, config};
 
+use super::repo_health::{inspect_ref_namespace, DeepHealthReport};
+
 #[derive(Args)]
 pub struct DoctorArgs {
     /// Output diagnostic report as JSON
@@ -24,6 +26,9 @@ pub struct DoctorArgs {
     /// Return a non-zero exit when any check reports an error
     #[arg(long)]
     strict: bool,
+    /// Run a deep object graph, capsule, policy, and repairability scan
+    #[arg(long)]
+    deep: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -65,15 +70,19 @@ struct DoctorSummary {
 
 #[derive(Debug, Clone, Serialize)]
 struct DoctorReport {
+    schema_version: u8,
+    action: &'static str,
     version: &'static str,
     cwd: Option<String>,
     repo_root: Option<String>,
     checks: Vec<DoctorCheck>,
     summary: DoctorSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deep: Option<DeepHealthReport>,
 }
 
 pub async fn run(args: DoctorArgs) -> anyhow::Result<()> {
-    let report = build_report().await;
+    let report = build_report(args.deep).await;
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -88,7 +97,7 @@ pub async fn run(args: DoctorArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn build_report() -> DoctorReport {
+async fn build_report(deep: bool) -> DoctorReport {
     let mut checks = Vec::new();
     checks.push(check(
         "cli",
@@ -142,11 +151,15 @@ async fn build_report() -> DoctorReport {
         }
     };
 
+    let mut deep_report = None;
     if let Some(root) = repo_root.as_deref() {
         add_layout_checks(root, &mut checks);
         add_config_check(root, &mut checks);
         add_store_checks(root, &mut checks);
         add_refs_validity_check(root, &mut checks);
+        if deep {
+            deep_report = add_deep_health_check(root, &mut checks);
+        }
         add_remote_check(root, &mut checks);
         add_daemon_reachability_check(root, &mut checks).await;
         add_daemon_auth_check(root, &mut checks);
@@ -173,11 +186,14 @@ async fn build_report() -> DoctorReport {
 
     let summary = summarize(&checks);
     DoctorReport {
+        schema_version: 1,
+        action: "doctor",
         version: env!("CARGO_PKG_VERSION"),
         cwd: cwd.map(|path| path.display().to_string()),
         repo_root: repo_root.map(|path| path.display().to_string()),
         checks,
         summary,
+        deep: deep_report,
     }
 }
 
@@ -365,6 +381,8 @@ fn add_refs_validity_check(root: &Path, checks: &mut Vec<DoctorCheck>) {
         }
     };
 
+    let namespace_issues = inspect_ref_namespace(root);
+
     let refs = match store.list_refs("") {
         Ok(refs) => refs,
         Err(err) => {
@@ -384,7 +402,7 @@ fn add_refs_validity_check(root: &Path, checks: &mut Vec<DoctorCheck>) {
         .map(|(name, id)| format!("{name}->{id}"))
         .collect::<Vec<_>>();
 
-    if missing.is_empty() {
+    if namespace_issues.is_empty() && missing.is_empty() {
         checks.push(check(
             "refs",
             CheckStatus::Ok,
@@ -392,13 +410,60 @@ fn add_refs_validity_check(root: &Path, checks: &mut Vec<DoctorCheck>) {
             None,
         ));
     } else {
+        let mut messages = Vec::new();
+        if !namespace_issues.is_empty() {
+            messages.push(format!(
+                "invalid ref namespace entries: {}",
+                namespace_issues.join(", ")
+            ));
+        }
+        if !missing.is_empty() {
+            messages.push(format!("missing object(s): {}", missing.join(", ")));
+        }
         checks.push(check(
             "refs",
             CheckStatus::Error,
-            format!("missing object(s): {}", missing.join(", ")),
-            Some("Restore missing objects from backup or repoint/delete the invalid refs."),
+            messages.join("; "),
+            Some("Inspect .claw/refs, rename or remove non-portable refs, and restore missing objects from backup or repoint/delete invalid refs."),
         ));
     }
+}
+
+fn add_deep_health_check(root: &Path, checks: &mut Vec<DoctorCheck>) -> Option<DeepHealthReport> {
+    let store = match ClawStore::open(root) {
+        Ok(store) => store,
+        Err(err) => {
+            checks.push(check(
+                "deep_health",
+                CheckStatus::Skipped,
+                format!("store unavailable: {err}"),
+                None,
+            ));
+            return None;
+        }
+    };
+    let report = super::repo_health::scan(&store);
+    let status = if report.errors() > 0 {
+        CheckStatus::Error
+    } else if report.issue_count > 0 {
+        CheckStatus::Warning
+    } else {
+        CheckStatus::Ok
+    };
+    checks.push(check(
+        "deep_health",
+        status,
+        format!(
+            "{} object(s), {} ref(s), {} issue(s), {} repairable",
+            report.object_count, report.ref_count, report.issue_count, report.repairable_count
+        ),
+        if report.issue_count > 0 {
+            Some("Run `claw repair plan --json` to inspect repairable issues before applying safe repairs.")
+        } else {
+            None
+        },
+    ));
+    Some(report)
 }
 
 fn add_remote_check(root: &Path, checks: &mut Vec<DoctorCheck>) {
@@ -509,7 +574,9 @@ async fn probe_remote(root: &Path, name: &str) -> anyhow::Result<String> {
             addr,
             bearer_token: token_profile
                 .as_deref()
-                .and_then(|profile| auth_store::resolve_access_token(Some(profile))),
+                .map(|profile| auth_store::try_resolve_access_token(Some(profile)))
+                .transpose()?
+                .flatten(),
             tls: None,
         },
         remote::ResolvedRemote::ClawLab {
@@ -519,7 +586,7 @@ async fn probe_remote(root: &Path, name: &str) -> anyhow::Result<String> {
         } => RemoteTransportConfig::Http {
             base_url,
             repo,
-            bearer_token: auth_store::resolve_access_token(token_profile.as_deref()),
+            bearer_token: auth_store::try_resolve_access_token(token_profile.as_deref())?,
         },
     };
 
@@ -571,14 +638,16 @@ fn add_daemon_auth_check(root: &Path, checks: &mut Vec<DoctorCheck>) {
     let mut warnings = Vec::new();
     if cfg.auth.require_auth_for_daemon {
         let profile = config::default_profile(&cfg);
-        if auth_store::resolve_access_token(Some(profile)).is_some() {
-            warnings.push(format!(
+        match auth_store::try_resolve_access_token(Some(profile)) {
+            Ok(Some(_)) => warnings.push(format!(
                 "auth required; token profile '{profile}' is present"
-            ));
-        } else {
-            warnings.push(format!(
+            )),
+            Ok(None) => warnings.push(format!(
                 "auth required; token profile '{profile}' is missing"
-            ));
+            )),
+            Err(err) => warnings.push(format!(
+                "auth required; token profile '{profile}' could not be read: {err}"
+            )),
         }
     } else {
         warnings.push("daemon auth is not required by config".to_string());
@@ -703,11 +772,31 @@ fn print_human(report: &DoctorReport) {
         "Summary: {} ok, {} warning(s), {} error(s), {} skipped",
         report.summary.ok, report.summary.warnings, report.summary.errors, report.summary.skipped
     );
+    if let Some(deep) = &report.deep {
+        if !deep.issues.is_empty() {
+            println!("Deep health issues:");
+            for issue in &deep.issues {
+                println!(
+                    "  {severity:<8} {code:<24} {message}",
+                    severity = issue.severity,
+                    code = issue.code,
+                    message = issue.message
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{check, summarize, CheckStatus};
+    use super::{check, inspect_ref_namespace, summarize, CheckStatus, DoctorArgs};
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: DoctorArgs,
+    }
 
     #[test]
     fn summary_counts_statuses() {
@@ -723,5 +812,68 @@ mod tests {
         assert_eq!(summary.warnings, 1);
         assert_eq!(summary.errors, 1);
         assert_eq!(summary.skipped, 1);
+    }
+
+    #[test]
+    fn parses_deep_flag() {
+        let cli = TestCli::parse_from(["doctor", "--deep", "--strict"]);
+        assert!(cli.args.deep);
+        assert!(cli.args.strict);
+    }
+
+    #[test]
+    fn ref_namespace_scan_reports_non_portable_ref_files() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let refs = tmp.path().join(".claw").join("refs");
+        std::fs::create_dir_all(refs.join("heads")).expect("create refs");
+        std::fs::write(refs.join("heads").join("CON"), b"not-an-id\n").expect("write ref");
+        std::fs::write(refs.join("heads").join("trailing-dot."), b"not-an-id\n")
+            .expect("write ref");
+        let has_trailing_dot = std::fs::read_dir(refs.join("heads"))
+            .expect("read refs")
+            .filter_map(Result::ok)
+            .any(|entry| entry.file_name() == "trailing-dot.");
+
+        let issues = inspect_ref_namespace(tmp.path());
+
+        assert!(
+            issues.iter().any(|issue| issue.contains("heads/CON")),
+            "issues: {issues:#?}"
+        );
+        if has_trailing_dot {
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.contains("heads/trailing-dot.")),
+                "issues: {issues:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ref_namespace_scan_reports_case_collisions_when_filesystem_allows_them() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let refs = tmp.path().join(".claw").join("refs").join("heads");
+        std::fs::create_dir_all(&refs).expect("create refs");
+        std::fs::write(refs.join("main"), b"not-an-id\n").expect("write ref");
+        if std::fs::write(refs.join("MAIN"), b"not-an-id\n").is_err() {
+            return;
+        }
+        let names = std::fs::read_dir(&refs)
+            .expect("read refs")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect::<Vec<_>>();
+        if !names.iter().any(|name| name == "main") || !names.iter().any(|name| name == "MAIN") {
+            return;
+        }
+
+        let issues = inspect_ref_namespace(tmp.path());
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.contains("case-insensitive collision")),
+            "issues: {issues:#?}"
+        );
     }
 }

@@ -97,6 +97,25 @@ impl CliTestEnv {
         result
     }
 
+    pub fn run_ok_with_stdin<I, S>(&self, cwd: &Path, args: I, stdin: &str) -> CommandResult
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let rendered = render_args(args);
+        let result = self.run_with_stdin(cwd, rendered.iter().map(|arg| arg.as_str()), stdin);
+        assert!(
+            result.status_code == 0,
+            "command failed in {}\n$ claw {}\nexit: {}\nstdout:\n{}\nstderr:\n{}",
+            cwd.display(),
+            rendered.join(" "),
+            result.status_code,
+            result.stdout,
+            result.stderr
+        );
+        result
+    }
+
     pub fn run_fail<I, S>(&self, cwd: &Path, args: I) -> CommandResult
     where
         I: IntoIterator<Item = S>,
@@ -195,6 +214,38 @@ impl CliTestEnv {
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         }
     }
+
+    fn run_with_stdin<I, S>(&self, cwd: &Path, args: I, stdin: &str) -> CommandResult
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let mut command = Command::new(claw_binary());
+        command
+            .current_dir(cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        apply_isolated_env(&mut command, &self.home_dir);
+        for arg in args {
+            command.arg(arg);
+        }
+
+        let mut child = command.spawn().expect("spawn claw command");
+        child
+            .stdin
+            .as_mut()
+            .expect("stdin pipe")
+            .write_all(stdin.as_bytes())
+            .expect("write claw stdin");
+        let output = child.wait_with_output().expect("run claw command");
+
+        CommandResult {
+            status_code: output.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        }
+    }
 }
 
 impl CommandResult {
@@ -202,12 +253,18 @@ impl CommandResult {
         format!("{}{}", self.stdout, self.stderr)
     }
 
+    #[track_caller]
     pub fn stdout_json(&self) -> Value {
-        serde_json::from_str(&self.stdout).expect("stdout to be valid json")
+        serde_json::from_str(&self.stdout).unwrap_or_else(|err| {
+            panic!("stdout to be valid json: {err}\nstdout:\n{}", self.stdout)
+        })
     }
 
+    #[track_caller]
     pub fn stderr_json(&self) -> Value {
-        serde_json::from_str(&self.stderr).expect("stderr to be valid json")
+        serde_json::from_str(&self.stderr).unwrap_or_else(|err| {
+            panic!("stderr to be valid json: {err}\nstderr:\n{}", self.stderr)
+        })
     }
 
     pub fn value_after(&self, prefix: &str) -> String {
@@ -291,7 +348,7 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn claw_binary() -> &'static Path {
+pub fn claw_binary() -> &'static Path {
     CLAW_BINARY.get_or_init(|| {
         let workspace = workspace_root();
         let status = Command::new("cargo")

@@ -2,6 +2,8 @@ use clap::Args;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use claw_core::id::{ChangeId, ObjectId};
 use claw_core::object::Object;
@@ -18,6 +20,9 @@ use crate::config::{find_repo_root, load_or_default_config};
 
 #[derive(Args)]
 pub struct ShipArgs {
+    /// Output a machine-readable JSON receipt
+    #[arg(long)]
+    json: bool,
     /// Intent ID to ship
     #[arg(short, long)]
     intent: String,
@@ -48,6 +53,15 @@ pub struct ShipArgs {
     /// Evidence expiration window in milliseconds
     #[arg(long = "evidence-expires-in-ms")]
     evidence_expires_in_ms: Option<u64>,
+    /// Run executable acceptance tests linked to the intent and attach results as capsule evidence.
+    #[arg(long = "run-acceptance")]
+    run_acceptance: bool,
+    /// Stop each linked acceptance command after this many milliseconds.
+    #[arg(long = "acceptance-timeout-ms", default_value_t = 300_000)]
+    acceptance_timeout_ms: u64,
+    /// Continue running remaining acceptance commands after a failure, but still block shipping if any fail.
+    #[arg(long = "acceptance-keep-going")]
+    acceptance_keep_going: bool,
     /// File containing private capsule metadata to encrypt
     #[arg(long = "private-file")]
     private_file: Option<PathBuf>,
@@ -186,10 +200,35 @@ pub fn run(args: ShipArgs) -> anyhow::Result<()> {
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis() as u64;
 
-    let registered_agent = ensure_registered_signing_agent(&store, &args.agent)?;
-    let keypair = keypair_for_agent(&args.agent, &registered_agent)?;
     let mut evidence = parse_evidence(&args.evidence)?;
     enrich_evidence_for_revision(&mut evidence, &rev_id, now_ms, &args);
+    let acceptance_results = if args.run_acceptance {
+        let results = run_acceptance_for_ship(
+            &root,
+            &intent,
+            &rev_id,
+            args.acceptance_timeout_ms,
+            args.acceptance_keep_going,
+        )?;
+        evidence.extend(results.iter().map(acceptance_result_evidence));
+        if let Some(failed) = results
+            .iter()
+            .find(|result| result.outcome != AcceptanceOutcome::Passed)
+        {
+            anyhow::bail!(
+                "acceptance test '{}' {} for intent {}; capsule was not written",
+                failed.name,
+                failed.outcome.status(),
+                intent.id
+            );
+        }
+        results
+    } else {
+        Vec::new()
+    };
+
+    let registered_agent = ensure_registered_signing_agent(&store, &args.agent)?;
+    let keypair = keypair_for_agent(&args.agent, &registered_agent)?;
     let mut signing_agents = vec![registered_agent.clone()];
 
     let public = CapsulePublic {
@@ -199,6 +238,7 @@ pub fn run(args: ShipArgs) -> anyhow::Result<()> {
         env_fingerprint: None,
         evidence,
     };
+    let evidence_count = public.evidence.len();
 
     let recipients = parse_recipient_public_keys(&args.recipient_keys)?;
     let mut capsule = if let Some(private_file) = args.private_file.as_deref() {
@@ -338,9 +378,42 @@ pub fn run(args: ShipArgs) -> anyhow::Result<()> {
     let new_intent_id = store.store_object(&Object::Intent(updated_intent.clone()))?;
     store.set_ref(&format!("intents/{}", updated_intent.id), &new_intent_id)?;
 
-    println!("Shipped intent: {}", updated_intent.id);
-    println!("  Capsule: {capsule_id}");
-    println!("  Revision: {rev_id}");
+    if args.json {
+        let co_signers = args.co_sign.clone();
+        let revision_ref = args.revision_ref.clone();
+        let agent_id = registered_agent.agent_id.clone();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": 1,
+                "action": "ship",
+                "intent_id": updated_intent.id.to_string(),
+                "intent_status": updated_intent.status,
+                "change_id": finalized_change.map(|id| id.to_string()),
+                "revision_ref": revision_ref,
+                "revision_id": rev_id.to_string(),
+                "capsule_id": capsule_id.to_string(),
+                "agent_id": agent_id,
+                "co_signers": co_signers,
+                "signature_count": signing_agents.len(),
+                "evidence_count": evidence_count,
+                "acceptance": {
+                    "run": args.run_acceptance,
+                    "passed": if args.run_acceptance { Some(true) } else { None },
+                    "count": acceptance_results.len(),
+                    "timeout_ms": args.acceptance_timeout_ms,
+                    "keep_going": args.acceptance_keep_going,
+                    "evidence_names": acceptance_results.iter().map(|result| result.name.clone()).collect::<Vec<_>>(),
+                },
+                "private_fields_encrypted": args.private_file.is_some(),
+                "recipient_count": recipients.len(),
+            }))?
+        );
+    } else {
+        println!("Shipped intent: {}", updated_intent.id);
+        println!("  Capsule: {capsule_id}");
+        println!("  Revision: {rev_id}");
+    }
 
     Ok(())
 }
@@ -419,6 +492,150 @@ fn enrich_evidence_for_revision(
                 .evidence_expires_in_ms
                 .map(|ttl| now_ms.saturating_add(ttl));
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AcceptanceOutcome {
+    Passed,
+    Failed,
+    TimedOut,
+}
+
+impl AcceptanceOutcome {
+    fn status(self) -> &'static str {
+        match self {
+            Self::Passed => "pass",
+            Self::Failed => "fail",
+            Self::TimedOut => "timeout",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct AcceptanceResult {
+    name: String,
+    command: String,
+    outcome: AcceptanceOutcome,
+    exit_code: Option<i32>,
+    duration_ms: u64,
+    started_at_ms: u64,
+    ended_at_ms: u64,
+    revision_id: ObjectId,
+}
+
+fn run_acceptance_for_ship(
+    root: &std::path::Path,
+    intent: &Intent,
+    revision_id: &ObjectId,
+    timeout_ms: u64,
+    keep_going: bool,
+) -> anyhow::Result<Vec<AcceptanceResult>> {
+    let mut results = Vec::new();
+    for (index, command) in intent.acceptance_tests.iter().enumerate() {
+        let result = run_acceptance_command_for_ship(
+            root,
+            format!("acceptance/{}", index + 1),
+            command,
+            timeout_ms,
+            revision_id,
+        )?;
+        let failed = result.outcome != AcceptanceOutcome::Passed;
+        results.push(result);
+        if failed && !keep_going {
+            break;
+        }
+    }
+    Ok(results)
+}
+
+fn run_acceptance_command_for_ship(
+    root: &std::path::Path,
+    name: String,
+    command: &str,
+    timeout_ms: u64,
+    revision_id: &ObjectId,
+) -> anyhow::Result<AcceptanceResult> {
+    let started_at_ms = current_time_ms();
+    let start = Instant::now();
+    let mut child = shell_command(command)
+        .current_dir(root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| {
+            anyhow::anyhow!("failed to run acceptance command '{}': {}", command, err)
+        })?;
+
+    let timeout = Duration::from_millis(timeout_ms);
+    let (outcome, exit_code) = loop {
+        if let Some(status) = child.try_wait()? {
+            let outcome = if status.success() {
+                AcceptanceOutcome::Passed
+            } else {
+                AcceptanceOutcome::Failed
+            };
+            break (outcome, status.code());
+        }
+
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            break (AcceptanceOutcome::TimedOut, None);
+        }
+
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    let ended_at_ms = current_time_ms();
+    let duration_ms = start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+
+    Ok(AcceptanceResult {
+        name,
+        command: command.to_string(),
+        outcome,
+        exit_code,
+        duration_ms,
+        started_at_ms,
+        ended_at_ms,
+        revision_id: *revision_id,
+    })
+}
+
+fn shell_command(command: &str) -> Command {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/C").arg(command);
+        cmd
+    }
+
+    #[cfg(not(windows))]
+    {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg(command);
+        cmd
+    }
+}
+
+fn acceptance_result_evidence(result: &AcceptanceResult) -> Evidence {
+    Evidence {
+        name: result.name.clone(),
+        status: result.outcome.status().to_string(),
+        duration_ms: result.duration_ms,
+        artifact_refs: Vec::new(),
+        summary: Some(format!("{} {}", result.name, result.outcome.status())),
+        revision_id: Some(result.revision_id),
+        command: Some(result.command.clone()),
+        exit_code: result.exit_code,
+        started_at_ms: Some(result.started_at_ms),
+        ended_at_ms: Some(result.ended_at_ms),
+        environment_digest: None,
+        runner_identity: None,
+        log_digest: None,
+        artifact_digest: None,
+        expires_at_ms: None,
+        trust_domain: Some("acceptance".to_string()),
+        signature: None,
     }
 }
 
@@ -534,8 +751,9 @@ fn collect_touched_paths(store: &ClawStore, revision: &Revision) -> anyhow::Resu
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_touched_paths, derive_capsule_trust_score, parse_evidence,
-        parse_recipient_public_keys, policy_signers,
+        acceptance_result_evidence, collect_touched_paths, derive_capsule_trust_score,
+        parse_evidence, parse_recipient_public_keys, policy_signers, AcceptanceOutcome,
+        AcceptanceResult,
     };
     use crate::commands::agent::AgentRegistration;
     use claw_core::object::{Object, TypeTag};
@@ -568,6 +786,31 @@ mod tests {
         assert!(parse_evidence(&["=pass".to_string()]).is_err());
         assert!(parse_evidence(&["test=".to_string()]).is_err());
         assert!(parse_evidence(&["test=pass:notnum".to_string()]).is_err());
+    }
+
+    #[test]
+    fn acceptance_result_maps_to_revision_bound_evidence() {
+        let revision_id = claw_core::hash::content_hash(TypeTag::Revision, b"acceptance");
+        let evidence = acceptance_result_evidence(&AcceptanceResult {
+            name: "acceptance/1".to_string(),
+            command: "cargo test -p app".to_string(),
+            outcome: AcceptanceOutcome::Passed,
+            exit_code: Some(0),
+            duration_ms: 123,
+            started_at_ms: 1_000,
+            ended_at_ms: 1_123,
+            revision_id,
+        });
+
+        assert_eq!(evidence.name, "acceptance/1");
+        assert_eq!(evidence.status, "pass");
+        assert_eq!(evidence.duration_ms, 123);
+        assert_eq!(evidence.revision_id, Some(revision_id));
+        assert_eq!(evidence.command.as_deref(), Some("cargo test -p app"));
+        assert_eq!(evidence.exit_code, Some(0));
+        assert_eq!(evidence.started_at_ms, Some(1_000));
+        assert_eq!(evidence.ended_at_ms, Some(1_123));
+        assert_eq!(evidence.trust_domain.as_deref(), Some("acceptance"));
     }
 
     #[test]
@@ -658,6 +901,8 @@ mod tests {
                 private_key: None,
                 revoked_at_ms: None,
                 revocation_reason: None,
+                quarantined_at_ms: None,
+                quarantine_reason: None,
                 created_at_ms: 1,
                 updated_at_ms: 1,
             },
@@ -669,6 +914,8 @@ mod tests {
                 private_key: None,
                 revoked_at_ms: None,
                 revocation_reason: None,
+                quarantined_at_ms: None,
+                quarantine_reason: None,
                 created_at_ms: 1,
                 updated_at_ms: 1,
             },
@@ -680,6 +927,8 @@ mod tests {
                 private_key: None,
                 revoked_at_ms: None,
                 revocation_reason: None,
+                quarantined_at_ms: None,
+                quarantine_reason: None,
                 created_at_ms: 1,
                 updated_at_ms: 1,
             },

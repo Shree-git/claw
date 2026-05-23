@@ -23,6 +23,8 @@ pub enum StoreError {
     RefCasConflict { expected: String, actual: String },
     #[error("invalid ref name: {0}")]
     InvalidRefName(String),
+    #[error("ref name collides on case-insensitive filesystems: requested {requested}, existing {existing}")]
+    RefNameCollision { requested: String, existing: String },
     #[error("ref path escapes refs root: {0}")]
     RefPathEscapesRoot(PathBuf),
 }

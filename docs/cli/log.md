@@ -20,15 +20,24 @@ from every branch head, and `--limit` caps the number of revisions returned.
 need revision IDs without parsing human text.
 
 ```json
-[
-  {
-    "author": "claw",
-    "created_at_ms": 1710000000000,
-    "parents": [],
-    "revision_id": "7b...",
-    "summary": "initial snapshot"
-  }
-]
+{
+  "schema_version": 1,
+  "action": "log",
+  "ref": null,
+  "all": false,
+  "limit": 20,
+  "tip_count": 1,
+  "entry_count": 1,
+  "entries": [
+    {
+      "author": "claw",
+      "created_at_ms": 1710000000000,
+      "parents": [],
+      "revision_id": "7b...",
+      "summary": "initial snapshot"
+    }
+  ]
+}
 ```
 
 For machine-readable failures, use:
