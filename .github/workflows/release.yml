@@ -430,22 +430,25 @@ jobs:
           esac
 
           test -n "$archive"
-          mkdir -p smoke-archive
-          tar -xJf "$archive" -C smoke-archive
-          binary="$(find smoke-archive -type f -name claw | head -n 1)"
+          smoke_root="$PWD/smoke-archive"
+          repo_dir="$smoke_root/repo"
+
+          mkdir -p "$smoke_root"
+          tar -xJf "$archive" -C "$smoke_root"
+          binary="$(find "$smoke_root" -type f -name claw | head -n 1)"
           test -n "$binary"
           "$binary" --version
 
-          mkdir -p smoke-archive/repo
+          mkdir -p "$repo_dir"
           (
-            cd smoke-archive/repo
+            cd "$repo_dir"
             "$binary" init
             "$binary" status
           )
 
           if [[ "${{ matrix.os }}" == "ubuntu-22.04" ]]; then
             (
-              cd smoke-archive/repo
+              cd "$repo_dir"
               "$binary" daemon --listen 127.0.0.1:50061 --health-listen 127.0.0.1:50062 --auth-token smoke-token >/tmp/claw-artifact-daemon.log 2>&1 &
               daemon_pid=$!
               trap 'kill "$daemon_pid" >/dev/null 2>&1 || true' EXIT

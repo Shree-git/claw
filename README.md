@@ -523,7 +523,7 @@ See [uninstall instructions](docs/operations/uninstall.md) for Homebrew, MSI, ma
 
 ## Project status
 
-Claw VCS is **v0.1.2-beta.3 beta candidate**. The repository includes release, operator, rollback, and production preflight tooling, but public release channels must be verified per release before they are treated as live. Keep Git or another proven system as the source of truth while evaluating Claw VCS.
+Claw VCS is **v0.1.2-beta.4 beta candidate**. The repository includes release, operator, rollback, and production preflight tooling, but public release channels must be verified per release before they are treated as live. Keep Git or another proven system as the source of truth while evaluating Claw VCS.
 
 ## License
 
