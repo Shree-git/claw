@@ -86,6 +86,39 @@ The release-channel blocker remains open until the artifact-name fix lands on
 `scripts/verify-release-channel.sh <launch-tag>` passes from a clean
 environment.
 
+### v0.1.2-beta.3 Release Attempt
+
+Command shape:
+
+```bash
+git tag -a v0.1.2-beta.3 -m "Claw VCS v0.1.2-beta.3" 4954f75328d6d715b1414b1f5d09c7d5bb276275
+git push origin v0.1.2-beta.3
+```
+
+Observed result:
+
+```text
+Release workflow run: https://github.com/Shree-git/claw-vcs/actions/runs/26317553294
+quality: passed
+security-audit-gate: passed
+compatibility-matrix-gate: passed on ubuntu-22.04, macos-latest, and windows-latest
+build-local-artifacts: passed for every target
+build-global-artifacts: passed
+contract-tests-gate: passed
+artifact-smoke-gate: passed on windows-latest, failed on ubuntu-22.04 and macos-latest
+GitHub release: not created
+```
+
+Status: fail for release-channel verification. The Unix archive smoke gate found
+and executed the extracted `claw` binary, then changed into the smoke repository
+and reused the binary as a relative path. The next release attempt must keep the
+extracted binary path absolute before changing directories.
+
+The release-channel blocker remains open until the Unix artifact smoke fix lands
+on `main`, a replacement launch tag is cut, artifacts are published, and
+`scripts/verify-release-channel.sh <launch-tag>` passes from a clean
+environment.
+
 ## 2026-05-11
 
 Environment:

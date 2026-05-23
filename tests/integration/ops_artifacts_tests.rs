@@ -933,12 +933,23 @@ fn public_launch_assets_exist_and_are_upload_ready() {
         "claw-vcs-aarch64-apple-darwin.tar.xz",
         "claw-vcs-x86_64-pc-windows-msvc.zip",
         "claw-vcs-x86_64-pc-windows-msvc.msi",
+        "smoke_root=\"$PWD/smoke-archive\"",
+        "repo_dir=\"$smoke_root/repo\"",
+        "cd \"$repo_dir\"",
     ] {
         assert!(
             release_workflow.contains(phrase),
-            "release artifact smoke gate must use cargo-dist artifact name: {phrase}"
+            "release artifact smoke gate must include expected smoke detail: {phrase}"
         );
     }
+    assert!(
+        release_workflow.lines().any(|line| {
+            line.contains("find \"$smoke_root\"")
+                && line.contains("-type f")
+                && line.contains("-name claw")
+        }),
+        "release artifact smoke gate must find the claw binary under the absolute smoke root"
+    );
     for stale_name in [
         "claw-x86_64-unknown-linux-gnu.tar.xz",
         "claw-aarch64-apple-darwin.tar.xz",

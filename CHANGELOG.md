@@ -3,6 +3,13 @@
 All public launch notes for Claw VCS live here from the `v0.1.x` line onward.
 Earlier build details may appear in GitHub Releases.
 
+## v0.1.2-beta.4
+
+### Fixed
+
+- Resolved the Unix release artifact smoke gate by keeping extracted archive
+  binary and repository paths absolute after changing directories.
+
 ## v0.1.2-beta.3
 
 ### Fixed
