@@ -523,7 +523,8 @@ fn test_partial_clone_filter() {
     assert!(!codec_filter.matches_object(&store, &patch_rs_id));
     assert!(codec_filter.matches_object(&store, &patch_json_id));
 
-    // Path filters are rooted through matching patches/revisions; standalone blobs do not match.
+    // Bare blobs have no path context, so they are not filter roots. Matching
+    // patches/revisions pull blob dependencies into fetch results separately.
     assert!(!path_filter.matches_object(&store, &blob_id));
 }
 
