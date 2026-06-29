@@ -19,7 +19,7 @@ name = "claw_crypto"
 claw-core = { workspace = true }
 blake3 = { workspace = true }
 ed25519-dalek = { workspace = true }
-chacha20poly1305 = "0.10"
+chacha20poly1305 = "0.11"
 x25519-dalek = { workspace = true }
 hex = { workspace = true }
 rand = { workspace = true }
